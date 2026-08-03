@@ -105,8 +105,10 @@ end
 -- ── websocket (Delta / Synapse / Fluxus style) ────────────
 local function getWsLib()
     local g = getgenv()
+    local env = getfenv(0)
     local c = {
-        g.WebSocket, g.syn and g.syn.websocket, g.fluxus and g.fluxus.websocket,
+        g.WebSocket, env.WebSocket, _G and _G.WebSocket,
+        g.syn and g.syn.websocket, g.fluxus and g.fluxus.websocket,
         g.http and g.http.websocket,
     }
     for _, lib in ipairs(c) do
@@ -221,6 +223,7 @@ local function connectToServer()
     return true
 end
 
+local libWarned = false
 task.spawn(function()
     while BB.Running do
         if not ws then
@@ -229,8 +232,15 @@ task.spawn(function()
                 setStatus(false)
                 toast("Put your relay URL at WS_URL in the script!")
             else
-                connectToServer()
-                if not connected then task.wait(1) end
+                if not getWsLib() then
+                    if not libWarned then
+                        libWarned = true
+                        toast("No websocket lib found — auto-connect skipped")
+                    end
+                else
+                    connectToServer()
+                    if not connected then task.wait(1) end
+                end
             end
         end
         task.wait(5)
@@ -245,7 +255,8 @@ local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 local UG = Instance.new("ScreenGui")
 UG.ResetOnSpawn = false
 UG.Name = "BoomboxGui"
-UG.Parent = LP:WaitForChild("PlayerGui")
+pcall(function() UG.Parent = game:GetService("CoreGui") end)
+if not UG.Parent then UG.Parent = LP:WaitForChild("PlayerGui") end
 
 local mobileGui
 if isMobile then
@@ -253,7 +264,8 @@ if isMobile then
     mobileGui.Name = "BoomboxMobile"
     mobileGui.ResetOnSpawn = false
     mobileGui.DisplayOrder = 999
-    mobileGui.Parent = LP:WaitForChild("PlayerGui")
+    pcall(function() mobileGui.Parent = game:GetService("CoreGui") end)
+    if not mobileGui.Parent then mobileGui.Parent = LP:WaitForChild("PlayerGui") end
 end
 
 local function Make(class, parent, props)
@@ -540,7 +552,7 @@ local dragOffset = Vector2.new()
 
 local function isInteractive(obj)
     while obj and obj ~= win do
-        if obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextBox") then
+        if obj ~= dragBtn and (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextBox")) then
             return true
         end
         obj = obj.Parent
@@ -573,6 +585,24 @@ bind(UIS.InputChanged, function(input)
         local mouse = UIS:GetMouseLocation()
         win.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
         clampWinToScreen(win)
+    end
+end)
+
+-- TITLEBAR GRAB — same pattern as the MM2 mobile toggle button (InputBegan +
+-- GetMouseLocation), so it fires reliably on touch as well as mouse. It shares
+-- the same dragging/dragOffset state as the dragBtn above, so both paths work.
+local tbarDragBtn = Make("TextButton", win, {
+    Size = UDim2.new(1, 0, 0, TBAR_H),
+    BackgroundTransparency = 1,
+    Text = "",
+    ZIndex = 2
+})
+bind(tbarDragBtn.InputBegan, function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local mouse = UIS:GetMouseLocation()
+        dragOffset = Vector2.new(mouse.X - win.AbsolutePosition.X, mouse.Y - win.AbsolutePosition.Y)
+        dragging = true
+        winStroke.Color = Color3.new(1, 1, 1)
     end
 end)
 
