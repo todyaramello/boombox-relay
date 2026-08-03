@@ -1,0 +1,13 @@
+{
+  "name": "boombox-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Websocket relay so multiple Roblox executors / browsers can share audio playback",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
