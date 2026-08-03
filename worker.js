@@ -52,7 +52,7 @@ const HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Boomboxes</title>
+<title>Boombox Web Player</title>
 <style>
 :root{--bg:#0f141c;--panel:#1b2130;--row:#242c3d;--acc:#00e5ff;--ok:#22c55e;--bad:#ef4444}
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif}
