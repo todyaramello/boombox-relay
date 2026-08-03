@@ -346,21 +346,36 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable (works on mobile). The camera is locked to Scriptable while
--- dragging (re-forced every frame in case the game resets it) so the touch
--- camera controller can't rotate the camera. Movement uses per-event
--- deltas (TouchMoved) instead of absolute positions so it never fights
--- the finger, and the dragged object stays fully on-screen.
-local dragging = nil
+-- draggable. Same approach as the MM2PepsiMenu: an invisible full-size drag
+-- layer over the window (it skips buttons/text boxes/scroll frames), and the
+-- window is moved with GetMouseLocation on mouse OR touch, so dragging works
+-- on mobile. The camera is locked to Scriptable while dragging (re-forced
+-- every frame) so the touch camera controller can't rotate it.
+local dragBtn = Instance.new("TextButton")
+dragBtn.Size = UDim2.new(1, 0, 1, 0)
+dragBtn.BackgroundTransparency = 1
+dragBtn.Text = ""
+dragBtn.ZIndex = 1
+dragBtn.Parent = main
+
+local dragging = false
+local dragOffset = Vector2.new()
 local savedCamType = nil
-local lastDragMoved = 0
+
+local function isInteractive(obj)
+    while obj and obj ~= main do
+        if obj ~= dragBtn and (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextBox") or obj:IsA("ScrollingFrame")) then
+            return true
+        end
+        obj = obj.Parent
+    end
+    return false
+end
 
 local function lockCamera()
     local cam = workspace.CurrentCamera
     if not cam then return end
-    if savedCamType == nil then
-        savedCamType = cam.CameraType
-    end
+    if savedCamType == nil then savedCamType = cam.CameraType end
     pcall(function()
         if cam.CameraType ~= Enum.CameraType.Scriptable then
             cam.CameraType = Enum.CameraType.Scriptable
@@ -369,99 +384,48 @@ local function lockCamera()
 end
 
 local function endDrag()
-    if not dragging then return end
-    if dragging.moved then lastDragMoved = os.clock() end
-    dragging = nil
+    dragging = false
     if savedCamType ~= nil and workspace.CurrentCamera then
         pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
     end
     savedCamType = nil
 end
 
-local function isOn(hitObj, pos)
-    if not hitObj then return false end
-    local ok, ab = pcall(function() return hitObj.AbsolutePosition end)
-    local ok2, as = pcall(function() return hitObj.AbsoluteSize end)
-    if not ok or not ok2 then return false end
-    return pos.X >= ab.X and pos.X <= ab.X + as.X and pos.Y >= ab.Y and pos.Y <= ab.Y + as.Y
+local function clampWinToScreen()
+    local sz = main.AbsoluteSize
+    if sz.X <= 0 or sz.Y <= 0 then return end
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or screen.AbsoluteSize
+    local ax, ay = main.AnchorPoint.X, main.AnchorPoint.Y
+    local x = math.clamp(main.AbsolutePosition.X, ax * sz.X, vp.X - (1 - ax) * sz.X)
+    local y = math.clamp(main.AbsolutePosition.Y, ay * sz.Y, vp.Y - (1 - ay) * sz.Y)
+    main.Position = UDim2.new(0, x, 0, y)
 end
 
-local function applyMove()
-    local d = dragging
-    local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
-    local o = d.obj
-    local ax, ay = o.AnchorPoint.X, o.AnchorPoint.Y
-    local ow, oh = o.AbsoluteSize.X, o.AbsoluteSize.Y
-    local minX, maxX = ax * ow, sw - (1 - ax) * ow
-    local minY, maxY = ay * oh, sh - (1 - ay) * oh
-    if minX > maxX then minX, maxX = sw / 2, sw / 2 end
-    if minY > maxY then minY, maxY = sh / 2, sh / 2 end
-    o.Position = UDim2.fromOffset(
-        math.clamp(d.startX + d.acc.X, minX, maxX),
-        math.clamp(d.startY + d.acc.Y, minY, maxY)
-    )
-end
-
-local function beginDrag(input, hitObj, dragObj)
-    local pos = toV2(input)
-    if not isOn(hitObj, pos) then return false end
-    local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
-    dragging = {
-        input = input,
-        obj = dragObj,
-        startX = dragObj.Position.X.Scale * sw + dragObj.Position.X.Offset,
-        startY = dragObj.Position.Y.Scale * sh + dragObj.Position.Y.Offset,
-        lastPos = pos,
-        acc = Vector2.new(0, 0),
-        moved = false,
-    }
-    pcall(function() input.Processed = true end)
+dragBtn.MouseButton1Down:bind(function()
+    local mouse = UIS:GetMouseLocation()
+    local ok, hit = pcall(function() return LP.PlayerGui:GetGuiObjectsAtPosition(mouse.X, mouse.Y) end)
+    if ok and hit then
+        for _, v in ipairs(hit) do
+            if isInteractive(v) then return end
+        end
+    end
+    dragging = true
+    dragOffset = Vector2.new(mouse.X - main.AbsolutePosition.X, mouse.Y - main.AbsolutePosition.Y)
     lockCamera()
-    return true
-end
-
--- touch (mobile)
-bind(UIS.TouchStarted, function(touch, processed)
-    if processed then return end
-    if dragging then endDrag() end
-    if not beginDrag(touch, titlebar, main) and toggleBtn then
-        beginDrag(touch, toggleBtn, toggleBtn)
-    end
-end)
-bind(UIS.TouchMoved, function(touch)
-    if not dragging or touch ~= dragging.input then return end
-    local pos = toV2(touch.Position)
-    local delta = pos - dragging.lastPos
-    dragging.acc = dragging.acc + delta
-    dragging.lastPos = pos
-    dragging.moved = true
-    applyMove()
-end)
-bind(UIS.TouchEnded, function(touch)
-    if dragging and touch == dragging.input then endDrag() end
 end)
 
--- mouse
-bind(UIS.InputBegan, function(input, processed)
-    if processed then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    if dragging then endDrag() end
-    if not beginDrag(input, titlebar, main) and toggleBtn then
-        beginDrag(input, toggleBtn, toggleBtn)
+UIS.InputEnded:bind(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then endDrag() end
     end
 end)
-bind(UIS.InputChanged, function(input)
-    if not dragging or input ~= dragging.input then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    local pos = toV2(input.Position)
-    local delta = pos - dragging.lastPos
-    dragging.acc = dragging.acc + delta
-    dragging.lastPos = pos
-    dragging.moved = true
-    applyMove()
-end)
-bind(UIS.InputEnded, function(input)
-    if dragging and input == dragging.input then endDrag() end
+
+UIS.InputChanged:bind(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local mouse = UIS:GetMouseLocation()
+        main.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
+        clampWinToScreen()
+    end
 end)
 
 task.spawn(function()
@@ -805,19 +769,52 @@ local function toggleGui()
     toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
 end
 
--- single tap = show/hide GUI, double tap = reset positions
+-- toggle button: drag it like the MM2PepsiMenu mobile button, single tap =
+-- show/hide GUI, double tap = reset positions (drag vs tap by distance).
 local lastTap = 0
-toggleBtn.Activated:bind(function()
-    if os.clock() - lastDragMoved < 0.3 then return end
-    local now = os.clock()
-    if now - lastTap < 0.35 then
-        main.Position = UDim2.fromScale(0.5, 0.5)
-        toggleBtn.Position = UDim2.new(1, -56, 1, -140)
-        toast("Boombox reset to center")
-    else
-        toggleGui()
+local btnDragging = false
+local btnStartPos = Vector2.new()
+local btnDragOffset = Vector2.new()
+
+toggleBtn.InputBegan:bind(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        btnStartPos = UIS:GetMouseLocation()
+        btnDragOffset = Vector2.new(btnStartPos.X - toggleBtn.AbsolutePosition.X, btnStartPos.Y - toggleBtn.AbsolutePosition.Y)
+        btnDragging = true
+        lockCamera()
     end
-    lastTap = now
+end)
+
+UIS.InputChanged:bind(function(input)
+    if not btnDragging then return end
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+        local pos = UIS:GetMouseLocation()
+        toggleBtn.Position = UDim2.new(0, pos.X - btnDragOffset.X, 0, pos.Y - btnDragOffset.Y)
+        toggleBtn.AnchorPoint = Vector2.new(0, 0)
+    end
+end)
+
+toggleBtn.InputEnded:bind(function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        if btnDragging then
+            btnDragging = false
+            local endPos = UIS:GetMouseLocation()
+            local moved = (Vector2.new(endPos.X, endPos.Y) - btnStartPos).Magnitude
+            if moved < 15 then
+                local now = os.clock()
+                if now - lastTap < 0.35 then
+                    main.Position = UDim2.fromScale(0.5, 0.5)
+                    toggleBtn.Position = UDim2.new(1, -56, 1, -140)
+                    toggleBtn.AnchorPoint = Vector2.new(1, 1)
+                    toast("Boombox reset to center")
+                else
+                    toggleGui()
+                end
+                lastTap = now
+            end
+            endDrag()
+        end
+    end
 end)
 
 UIS.InputBegan:bind(function(input, processed)
