@@ -1,14 +1,52 @@
 // ─────────────────────────────────────────────────────────────
-//  Boombox relay — Cloudflare Workers version
+//  Boombox relay — Cloudflare Workers version (Durable Object)
 //  Always-on, free, no PC, no credit card, never sleeps.
 //
-//  Deploy: dash.cloudflare.com → Workers & Pages → Create →
-//  → Worker → paste this whole file → Deploy.
+//  Why a Durable Object: plain module state is per-isolate, so
+//  two WebSocket clients can land on different isolates and never
+//  see each other. A Durable Object routes ALL WebSocket
+//  connections to a single object instance -> real fanout.
+//
+//  Deploy (dashboard): dash.cloudflare.com → Workers & Pages →
+//  Create → Worker → paste this whole file → Deploy, THEN:
+//  Settings → Bindings → Durable Object → name: BOOMBOX_RELAY,
+//  class: BoomboxRelay → Save. Redeploy (Deploy again) so the
+//  migration registers.
+//
 //  Your URL:  https://<name>.workers.dev
 //  Lua uses:  wss://<name>.workers.dev
 // ─────────────────────────────────────────────────────────────
 
-const connections = new Set();
+export class BoomboxRelay {
+  constructor(state, env) {
+    this.connections = new Set();
+  }
+
+  async fetch(request) {
+    const upgrade = (request.headers.get("Upgrade") || "").toLowerCase();
+    if (upgrade !== "websocket") {
+      return new Response("Boombox relay", { status: 200 });
+    }
+
+    const pair = new WebSocketPair();
+    const client = pair[0];
+    const server = pair[1];
+    server.accept();
+    this.connections.add(server);
+
+    server.addEventListener("message", (event) => {
+      const text = String(event.data);
+      for (const other of this.connections) {
+        if (other === server || other.readyState !== 1) continue;
+        try { other.send(text); } catch {}
+      }
+    });
+    server.addEventListener("close", () => this.connections.delete(server));
+    server.addEventListener("error", () => this.connections.delete(server));
+
+    return new Response(null, { status: 101, webSocket: client });
+  }
+}
 
 const HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -113,38 +151,15 @@ render();connect();
 </html>`;
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const upgrade = (request.headers.get("Upgrade") || "").toLowerCase();
-    if (upgrade === "websocket") return handleWs();
-    return new Response(HTML, {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
+    if (upgrade !== "websocket") {
+      return new Response(HTML, {
+        headers: { "Content-Type": "text/html; charset=utf-8" },
+      });
+    }
+    const id = env.BOOMBOX_RELAY.idFromName("main");
+    const stub = env.BOOMBOX_RELAY.get(id);
+    return stub.fetch(request);
   },
 };
-
-function handleWs() {
-  const pair = new WebSocketPair();
-  const client = pair[0];
-  const server = pair[1];
-  server.accept();
-  connections.add(server);
-
-  server.addEventListener("message", (event) => {
-    const text = String(event.data);
-    try {
-      const m = JSON.parse(text);
-      if (m.type === "play") console.log(`[play] ${m.user || "?"} -> ${m.id || "?"} (${m.name || "?"})`);
-      if (m.type === "stop") console.log(`[stop] ${m.user || "?"}`);
-    } catch {}
-    for (const other of connections) {
-      if (other === server) continue;
-      if (other.readyState === 1) {
-        try { other.send(text); } catch {}
-      }
-    }
-  });
-
-  server.addEventListener("close", () => connections.delete(server));
-  server.addEventListener("error", () => connections.delete(server));
-  return new Response(null, { status: 101, webSocket: client });
-}

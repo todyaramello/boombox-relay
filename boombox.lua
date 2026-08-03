@@ -145,45 +145,117 @@ local function bindEvent(obj, name, cb)
 end
 
 local function wsSend(conn, text)
-    if not conn then return end
+    if not conn then return false end
     if conn.style == "id" then
-        if conn.send then pcall(function() conn.send(conn.id, text) end)
-        elseif conn.lib and conn.lib.send then pcall(function() conn.lib.send(conn.id, text) end)
-        elseif conn.lib and conn.lib.Send then pcall(function() conn.lib.Send(conn.id, text) end) end
-        if type(conn.id) == "table" or type(conn.id) == "userdata" then
-            if conn.id.Send then pcall(function() conn.id:Send(text) end)
-            elseif conn.id.send then pcall(function() conn.id:send(text) end) end
-        end
+        if conn.send then return pcall(function() conn.send(conn.id, text) end) end
+        if conn.lib and conn.lib.send then return pcall(function() conn.lib.send(conn.id, text) end) end
+        if conn.lib and conn.lib.Send then return pcall(function() conn.lib.Send(conn.id, text) end) end
     else
-        local obj = conn.obj
-        if obj.Send then pcall(function() obj:Send(text) end)
-        elseif obj.send then pcall(function() obj:send(text) end)
-        elseif conn.send then pcall(function() conn.send(text) end) end
+        local h = conn.obj
+        if h then
+            if h.Send then return pcall(function() h:Send(text) end) end
+            if h.send then return pcall(function() h:send(text) end) end
+        end
+        if conn.send then return pcall(function() conn.send(h, text) end) end
+        if conn.lib and conn.lib.send then return pcall(function() conn.lib.send(h, text) end) end
     end
+    return false
 end
 
 local function wsClose(conn)
-    if not conn then return end
+    if not conn then return false end
     if conn.style == "id" then
-        if conn.close then pcall(function() conn.close(conn.id) end)
-        elseif conn.lib and conn.lib.close then pcall(function() conn.lib.close(conn.id) end)
-        elseif conn.lib and conn.lib.Close then pcall(function() conn.lib.Close(conn.id) end) end
-        if type(conn.id) == "table" or type(conn.id) == "userdata" then
-            if conn.id.Close then pcall(function() conn.id:Close() end)
-            elseif conn.id.close then pcall(function() conn.id:close() end) end
-        end
+        if conn.close then return pcall(function() conn.close(conn.id) end) end
+        if conn.lib and conn.lib.close then return pcall(function() conn.lib.close(conn.id) end) end
+        if conn.lib and conn.lib.Close then return pcall(function() conn.lib.Close(conn.id) end) end
     else
-        local obj = conn.obj
-        if obj.Close then pcall(function() obj:Close() end)
-        elseif obj.close then pcall(function() obj:close() end)
-        elseif conn.close then pcall(function() conn.close() end) end
+        local h = conn.obj
+        if h then
+            if h.Close then return pcall(function() h:Close() end) end
+            if h.close then return pcall(function() h:close() end) end
+        end
+        if conn.close then return pcall(function() conn.close(h) end) end
+        if conn.lib and conn.lib.close then return pcall(function() conn.lib.close(h) end) end
     end
+    return false
 end
 
 local function sendMsg(data)
     if not ws then return false end
     local ok = pcall(function() wsSend(ws, Http:JSONEncode(data)) end)
     return ok
+end
+
+-- ── handle introspection + event wiring (Delta object style) ─
+local function wireEvent(h, name, fn)
+    if not h then return end
+    local ok, v = pcall(function() return h[name] end)
+    if ok and v ~= nil then
+        if type(v) == "function" then
+            pcall(function() h[name] = fn end)
+        elseif type(v) == "table" or type(v) == "userdata" then
+            local okC = pcall(function() v:Connect(fn) end)
+            if okC then return end
+            local okc = pcall(function() v:connect(fn) end)
+            if okc then return end
+            pcall(function() h[name] = fn end)
+        end
+    end
+    pcall(function() h[name] = fn end)
+    pcall(function() h[name](h, fn) end)
+end
+
+local function wireEvents(h)
+    local events = {
+        { "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end },
+        { "OnMessage", function(msg) handleMessage(msg) end },
+        { "OnClose", function() setStatus(false) ws = nil print("[Boombox] Disconnected") end },
+        { "OnError", function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end },
+    }
+    for _, e in ipairs(events) do
+        wireEvent(h, e[1], e[2])
+        local lname = e[1]:gsub("^On", "on")
+        if lname ~= e[1] then wireEvent(h, lname, e[2]) end
+    end
+end
+
+local function dumpWs(h)
+    if not h then return end
+    print("[Boombox] handle type=" .. type(h) .. " tostring=" .. tostring(h))
+    if type(h) == "table" then
+        pcall(function()
+            for k, v in pairs(h) do
+                print("[Boombox]   handle." .. tostring(k) .. " = " .. type(v))
+            end
+        end)
+    end
+    local mtOk, mt = pcall(getmetatable, h)
+    if mtOk and type(mt) == "table" then
+        pcall(function()
+            for k, v in pairs(mt) do
+                if k ~= "__index" then
+                    print("[Boombox]   meta." .. tostring(k) .. " = " .. type(v))
+                end
+            end
+        end)
+        local idx = mt.__index
+        if type(idx) == "table" then
+            pcall(function()
+                for k, v in pairs(idx) do
+                    print("[Boombox]   index." .. tostring(k) .. " = " .. type(v))
+                end
+            end)
+        end
+    end
+end
+
+local function probeConn(h)
+    local parts = {}
+    for _, n in ipairs({ "ReadyState", "readyState", "State", "state", "Open", "open", "IsOpen", "isOpen" }) do
+        local ok, v = pcall(function() return h[n] end)
+        if ok and v ~= nil then parts[#parts + 1] = n .. "=" .. tostring(v) end
+    end
+    return #parts > 0 and table.concat(parts, " ") or "(no state field)"
 end
 
 -- ── toast/status (toast prints to console; GUI built later) ─
@@ -273,12 +345,14 @@ local function connectToServer()
 
     local resB = nil
     local okB, errB = pcall(function() resB = connectFn(WS_URL, callbacks) end)
-    if okB then
-        print("[Boombox] callback-table connect OK, handle=" .. tostring(resB))
-        ws = { style = "id", id = resB, lib = lib, send = sendFn, close = closeFn }
+    if okB and resB ~= nil then
+        print("[Boombox] connect returned handle=" .. tostring(resB))
+        dumpWs(resB)
+        wireEvents(resB)
+        ws = { style = "obj", obj = resB, lib = lib, send = sendFn, close = closeFn }
         return true
     end
-    print("[Boombox] callback-table connect failed: " .. tostring(errB))
+    if not okB then print("[Boombox] callback-table connect failed: " .. tostring(errB)) end
 
     if objHangs then
         print("[Boombox] skipping object-style connect (it hung before)")
@@ -302,12 +376,10 @@ local function connectToServer()
         print("[Boombox] object-style connect returned nil")
         return false
     end
-    print("[Boombox] object-style connect returned: " .. tostring(resA))
-    ws = { style = "obj", obj = resA, send = sendFn, close = closeFn }
-    bindEvent(resA, "OnMessage", handleMessage)
-    bindEvent(resA, "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end)
-    bindEvent(resA, "OnClose", function() setStatus(false) ws = nil print("[Boombox] Disconnected") end)
-    bindEvent(resA, "OnError", function(e) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(e)) end)
+    print("[Boombox] plain connect returned handle=" .. tostring(resA))
+    dumpWs(resA)
+    wireEvents(resA)
+    ws = { style = "obj", obj = resA, lib = lib, send = sendFn, close = closeFn }
     return true
 end
 
@@ -335,7 +407,7 @@ task.spawn(function()
         else
             if not connected and os.clock() - stuckLogged > 10 then
                 stuckLogged = os.clock()
-                print("[Boombox] handle exists but no OnOpen yet (waiting...)")
+                print("[Boombox] no OnOpen yet. state: " .. (ws and ws.obj and probeConn(ws.obj) or "?"))
             end
         end
         task.wait(5)
