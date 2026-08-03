@@ -323,9 +323,11 @@ statusText.Parent = titlebar
 -- draggable (works on mobile). The camera is locked to Scriptable while
 -- dragging (re-forced every frame in case the game resets it) so the touch
 -- camera controller can't rotate the camera, and the drag keeps tracking
--- the touch even if the titlebar slides off-screen.
+-- the touch even if the dragged object slides off-screen. Objects stay
+-- fully on-screen (no more getting stuck half off the edge).
 local dragging = nil
 local savedCamType = nil
+local lastDragMoved = 0
 
 local function lockCamera()
     local cam = workspace.CurrentCamera
@@ -342,6 +344,7 @@ end
 
 local function endDrag()
     if not dragging then return end
+    if dragging.moved then lastDragMoved = os.clock() end
     dragging = nil
     if savedCamType ~= nil and workspace.CurrentCamera then
         pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
@@ -349,18 +352,22 @@ local function endDrag()
     savedCamType = nil
 end
 
+local function tryBeginDrag(input, hitObj, dragObj)
+    local p = input.Position
+    local ab = hitObj.AbsolutePosition
+    local as = hitObj.AbsoluteSize
+    if p.X < ab.X or p.X > ab.X + as.X or p.Y < ab.Y or p.Y > ab.Y + as.Y then return end
+    dragging = { input = input, obj = dragObj, start = dragObj.Position, startInput = p, moved = false }
+    input.Processed = true
+    lockCamera()
+end
+
 UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
     if dragging then endDrag() end
-    local p = input.Position
-    local tb = titlebar.AbsolutePosition
-    local ts = titlebar.AbsoluteSize
-    if p.X >= tb.X and p.X <= tb.X + ts.X and p.Y >= tb.Y and p.Y <= tb.Y + ts.Y then
-        dragging = { input = input, startPos = main.Position, startInput = p }
-        input.Processed = true
-        lockCamera()
-    end
+    tryBeginDrag(input, titlebar, main)
+    if not dragging then tryBeginDrag(input, toggleBtn, toggleBtn) end
 end)
 
 task.spawn(function()
@@ -374,10 +381,18 @@ UIS.InputChanged:Connect(function(input)
     if not dragging or input ~= dragging.input then return end
     if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
     local delta = input.Position - dragging.startInput
-    main.Position = UDim2.fromScale(
-        math.clamp(dragging.startPos.X.Scale + delta.X / screen.AbsoluteSize.X, 0, 1),
-        math.clamp(dragging.startPos.Y.Scale + delta.Y / screen.AbsoluteSize.Y, 0, 1)
-    )
+    if delta.Magnitude > 8 then dragging.moved = true end
+    local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
+    local o = dragging.obj
+    local ax, ay = o.AnchorPoint.X, o.AnchorPoint.Y
+    local ow, oh = o.AbsoluteSize.X, o.AbsoluteSize.Y
+    local minX, maxX = ax * ow, sw - (1 - ax) * ow
+    local minY, maxY = ay * oh, sh - (1 - ay) * oh
+    if minX > maxX then minX, maxX = sw / 2, sw / 2 end
+    if minY > maxY then minY, maxY = sh / 2, sh / 2 end
+    local px = dragging.start.X.Scale * sw + delta.X
+    local py = dragging.start.Y.Scale * sh + delta.Y
+    o.Position = UDim2.fromOffset(math.clamp(px, minX, maxX), math.clamp(py, minY, maxY))
 end)
 
 UIS.InputEnded:Connect(function(input)
@@ -719,7 +734,22 @@ local function toggleGui()
     main.Visible = not guiHidden
     toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
 end
-toggleBtn.Activated:Connect(toggleGui)
+
+-- single tap = show/hide GUI, double tap = reset positions
+local lastTap = 0
+toggleBtn.Activated:Connect(function()
+    if os.clock() - lastDragMoved < 0.3 then return end
+    local now = os.clock()
+    if now - lastTap < 0.35 then
+        main.Position = UDim2.fromScale(0.5, 0.5)
+        toggleBtn.Position = UDim2.new(1, -56, 1, -140)
+        toast("Boombox reset to center")
+    else
+        toggleGui()
+    end
+    lastTap = now
+end)
+
 UIS.InputBegan:Connect(function(input, processed)
     if processed then return end
     if input.KeyCode == TOGGLE_KEY then toggleGui() end
