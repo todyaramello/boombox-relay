@@ -346,31 +346,14 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable. Same approach as the MM2PepsiMenu: an invisible full-size drag
--- layer over the window (it skips buttons/text boxes/scroll frames), and the
--- window is moved with GetMouseLocation on mouse OR touch, so dragging works
--- on mobile. The camera is locked to Scriptable while dragging (re-forced
--- every frame) so the touch camera controller can't rotate it.
-local dragBtn = Instance.new("TextButton")
-dragBtn.Size = UDim2.new(1, 0, 1, 0)
-dragBtn.BackgroundTransparency = 1
-dragBtn.Text = ""
-dragBtn.ZIndex = 1
-dragBtn.Parent = main
+-- draggable: ONLY the top bar is the drag handle. Movement uses the same
+-- GetMouseLocation approach as the MM2PepsiMenu (works on mouse AND touch),
+-- and the camera is locked to Scriptable while dragging so it can't rotate.
+titlebar.Active = true
 
 local dragging = false
 local dragOffset = Vector2.new()
 local savedCamType = nil
-
-local function isInteractive(obj)
-    while obj and obj ~= main do
-        if obj ~= dragBtn and (obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextBox") or obj:IsA("ScrollingFrame")) then
-            return true
-        end
-        obj = obj.Parent
-    end
-    return false
-end
 
 local function lockCamera()
     local cam = workspace.CurrentCamera
@@ -401,22 +384,12 @@ local function clampWinToScreen()
     main.Position = UDim2.new(0, x, 0, y)
 end
 
-bind(dragBtn.MouseButton1Down, function()
-    local mouse = UIS:GetMouseLocation()
-    local ok, hit = pcall(function() return LP.PlayerGui:GetGuiObjectsAtPosition(mouse.X, mouse.Y) end)
-    if ok and hit then
-        for _, v in ipairs(hit) do
-            if isInteractive(v) then return end
-        end
-    end
-    dragging = true
-    dragOffset = Vector2.new(mouse.X - main.AbsolutePosition.X, mouse.Y - main.AbsolutePosition.Y)
-    lockCamera()
-end)
-
-bind(UIS.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if dragging then endDrag() end
+bind(titlebar.InputBegan, function(input)
+    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+        local mouse = UIS:GetMouseLocation()
+        dragOffset = Vector2.new(mouse.X - main.AbsolutePosition.X, mouse.Y - main.AbsolutePosition.Y)
+        dragging = true
+        lockCamera()
     end
 end)
 
@@ -425,6 +398,12 @@ bind(UIS.InputChanged, function(input)
         local mouse = UIS:GetMouseLocation()
         main.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
         clampWinToScreen()
+    end
+end)
+
+bind(UIS.InputEnded, function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then endDrag() end
     end
 end)
 
