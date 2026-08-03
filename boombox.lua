@@ -320,27 +320,32 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable
-local dragConn1, dragConn2
-titlebar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        local startPos = main.Position
-        local startInput = input.Position
-        dragConn1 = input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                if dragConn1 then dragConn1:Disconnect() end
-                if dragConn2 then dragConn2:Disconnect() end
-            end
-        end)
-        dragConn2 = UIS.InputChanged:Connect(function(ci)
-            if (ci == input) and (ci.UserInputType == Enum.UserInputType.MouseMovement or ci.UserInputType == Enum.UserInputType.Touch) then
-                local delta = ci.Position - startInput
-                main.Position = UDim2.fromScale(
-                    math.clamp(startPos.X.Scale + delta.X / screen.AbsoluteSize.X, 0, 1),
-                    math.clamp(startPos.Y.Scale + delta.Y / screen.AbsoluteSize.Y, 0, 1)
-                )
-            end
-        end)
+-- draggable (works on mobile; input is marked processed so the camera
+-- doesn't rotate while dragging, and the drag keeps tracking the touch
+-- even if the titlebar slides off-screen)
+local dragging = nil
+UIS.InputBegan:Connect(function(input, processed)
+    if dragging or processed then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    local p = input.Position
+    local tb = titlebar.AbsolutePosition
+    local ts = titlebar.AbsoluteSize
+    if p.X >= tb.X and p.X <= tb.X + ts.X and p.Y >= tb.Y and p.Y <= tb.Y + ts.Y then
+        dragging = { input = input, startPos = main.Position, startInput = p }
+        input.Processed = true
+    end
+end)
+UIS.InputChanged:Connect(function(input)
+    if not dragging or input ~= dragging.input then return end
+    local delta = input.Position - dragging.startInput
+    main.Position = UDim2.fromScale(
+        math.clamp(dragging.startPos.X.Scale + delta.X / screen.AbsoluteSize.X, 0, 1),
+        math.clamp(dragging.startPos.Y.Scale + delta.Y / screen.AbsoluteSize.Y, 0, 1)
+    )
+end)
+UIS.InputEnded:Connect(function(input)
+    if dragging and input == dragging.input then
+        dragging = nil
     end
 end)
 
