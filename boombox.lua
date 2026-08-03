@@ -103,7 +103,11 @@ local function loadPlaylist()
 end
 
 -- ── websocket (Delta / Synapse / Fluxus style) ────────────
+local wsLibCache = nil
+local wsLibScanDone = false
 local function getWsLib()
+    if wsLibCache then return wsLibCache end
+    if wsLibScanDone then return nil end
     local g = getgenv()
     local env = getfenv(0)
     local c = {
@@ -112,10 +116,12 @@ local function getWsLib()
         g.syn and g.syn.websocket, g.fluxus and g.fluxus.websocket,
         g.http and g.http.websocket,
     }
+    wsLibScanDone = true
     for i, lib in ipairs(c) do
         if type(lib) == "table" or type(lib) == "userdata" then
             if lib.connect or lib.Connect then
                 print("[Boombox] WS lib found at slot " .. i .. " (" .. tostring(lib) .. ")")
+                wsLibCache = lib
                 return lib
             end
         end
@@ -244,6 +250,8 @@ local function handleMessage(raw)
     end
 end
 
+local objHangs = false
+
 local function connectToServer()
     local lib = getWsLib()
     if not lib then return false end
@@ -251,37 +259,56 @@ local function connectToServer()
     local sendFn = lib.send or lib.Send
     local closeFn = lib.close or lib.Close
     print("[Boombox] connecting to " .. WS_URL)
-    local okA, resA = pcall(function() return connectFn(WS_URL) end)
-    if okA and resA and type(resA) ~= "number" then
-        print("[Boombox] object-style connect returned: " .. tostring(resA))
-        ws = { style = "obj", obj = resA, send = sendFn, close = closeFn }
-        bindEvent(resA, "OnMessage", handleMessage)
-        bindEvent(resA, "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end)
-        bindEvent(resA, "OnClose", function() setStatus(false) ws = nil print("[Boombox] Disconnected") end)
-        bindEvent(resA, "OnError", function(e) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(e)) end)
-        return true
-    end
-    if not okA then print("[Boombox] object-style connect failed: " .. tostring(resA)) end
+
+    local callbacks = {
+        onOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
+        onMessage = function(msg) handleMessage(msg) end,
+        onClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
+        onError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
+        OnOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
+        OnMessage = function(msg) handleMessage(msg) end,
+        OnClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
+        OnError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
+    }
+
     local resB = nil
-    local okB, errB = pcall(function()
-        resB = connectFn(WS_URL, {
-            onOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
-            onMessage = function(msg) handleMessage(msg) end,
-            onClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
-            onError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
-            OnOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
-            OnMessage = function(msg) handleMessage(msg) end,
-            OnClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
-            OnError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
-        })
-    end)
+    local okB, errB = pcall(function() resB = connectFn(WS_URL, callbacks) end)
     if okB then
-        print("[Boombox] callback-table connect returned id: " .. tostring(resB))
+        print("[Boombox] callback-table connect OK, handle=" .. tostring(resB))
         ws = { style = "id", id = resB, lib = lib, send = sendFn, close = closeFn }
         return true
     end
     print("[Boombox] callback-table connect failed: " .. tostring(errB))
-    return false
+
+    if objHangs then
+        print("[Boombox] skipping object-style connect (it hung before)")
+        return false
+    end
+
+    local done, resA = false, nil
+    task.spawn(function()
+        local ok, r = pcall(function() return connectFn(WS_URL) end)
+        done = true
+        if ok then resA = r end
+    end)
+    local t0 = tick()
+    while not done and tick() - t0 < 4 do task.wait(0.05) end
+    if not done then
+        objHangs = true
+        print("[Boombox] object-style connect blocked 4s — skipping it from now on")
+        return false
+    end
+    if resA == nil then
+        print("[Boombox] object-style connect returned nil")
+        return false
+    end
+    print("[Boombox] object-style connect returned: " .. tostring(resA))
+    ws = { style = "obj", obj = resA, send = sendFn, close = closeFn }
+    bindEvent(resA, "OnMessage", handleMessage)
+    bindEvent(resA, "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end)
+    bindEvent(resA, "OnClose", function() setStatus(false) ws = nil print("[Boombox] Disconnected") end)
+    bindEvent(resA, "OnError", function(e) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(e)) end)
+    return true
 end
 
 local libWarned = false
@@ -1037,6 +1064,23 @@ end)
 loadPlaylist()
 rebuildList()
 setStatus(false)
+task.spawn(function()
+    local g = getgenv()
+    local fn = g.request or g.http_request or (g.syn and g.syn.request)
+    if not fn then
+        print("[Boombox] relay probe skipped (no request fn)")
+        return
+    end
+    local url = WS_URL:gsub("^wss://", "https://")
+    local ok, res = pcall(function()
+        return fn({ Url = url, Method = "GET" })
+    end)
+    if ok then
+        print("[Boombox] relay HTTP probe " .. url .. " -> " .. tostring(res and res.StatusCode))
+    else
+        print("[Boombox] relay HTTP probe error: " .. tostring(res))
+    end
+end)
 print("[Boombox] loaded on " .. (isMobile and "mobile" or "desktop")
     .. " | viewport " .. tostring(VIEWPORT)
     .. " | WS_URL " .. WS_URL)
