@@ -390,8 +390,8 @@ UIS.InputChanged:Connect(function(input)
     local minY, maxY = ay * oh, sh - (1 - ay) * oh
     if minX > maxX then minX, maxX = sw / 2, sw / 2 end
     if minY > maxY then minY, maxY = sh / 2, sh / 2 end
-    local px = dragging.start.X.Scale * sw + delta.X
-    local py = dragging.start.Y.Scale * sh + delta.Y
+    local px = dragging.start.X.Scale * sw + dragging.start.X.Offset + delta.X
+    local py = dragging.start.Y.Scale * sh + dragging.start.Y.Offset + delta.Y
     o.Position = UDim2.fromOffset(math.clamp(px, minX, maxX), math.clamp(py, minY, maxY))
 end)
 
