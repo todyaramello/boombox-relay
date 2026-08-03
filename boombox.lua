@@ -658,7 +658,7 @@ end)
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Name = "BoomboxToggle"
 toggleBtn.Size = UDim2.fromOffset(46, 46)
-toggleBtn.Position = UDim2.new(1, -60, 1, -64)
+toggleBtn.Position = UDim2.new(1, -70, 1, -150)
 toggleBtn.AnchorPoint = Vector2.new(1, 1)
 toggleBtn.BackgroundColor3 = C.panel
 toggleBtn.BackgroundTransparency = 0.15
