@@ -25,6 +25,7 @@ local LP = Players.LocalPlayer
 
 local WS_URL   = "wss://boombox-relay.wifiskeleton07.workers.dev"
 local SAVE_FILE = "boombox_playlist.json"
+local TOGGLE_KEY = Enum.KeyCode.Semicolon
 
 local playlist     = {}
 local currentSound = nil
@@ -260,8 +261,14 @@ local function makeBtn(name, col)
     return b
 end
 
+-- adaptive size: shrinks on small screens
+local vp = screen.AbsoluteSize
+local GUI_W = math.clamp(vp.X * 0.85, 240, 340)
+local GUI_H = math.clamp(vp.Y * 0.7, 340, 500)
+local LIST_H = math.max(GUI_H - 230, 90)
+
 local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(350, 520)
+main.Size = UDim2.fromOffset(GUI_W, GUI_H)
 main.Position = UDim2.fromScale(0.5, 0.5)
 main.AnchorPoint = Vector2.new(0.5, 0.5)
 main.BackgroundColor3 = C.bg
@@ -501,7 +508,7 @@ clearBtn.Parent = headRow
 
 -- playlist list
 local listFrame = Instance.new("ScrollingFrame")
-listFrame.Size = UDim2.new(1, 0, 0, 260)
+listFrame.Size = UDim2.new(1, 0, 0, LIST_H)
 listFrame.LayoutOrder = 5
 listFrame.BackgroundColor3 = C.panel
 listFrame.ScrollBarThickness = 4
@@ -645,6 +652,35 @@ clearBtn.Activated:Connect(function()
     playlist = {}
     savePlaylist()
     rebuildList()
+end)
+
+-- ── toggle ────────────────────────────────────────────────
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "BoomboxToggle"
+toggleBtn.Size = UDim2.fromOffset(46, 46)
+toggleBtn.Position = UDim2.new(1, -60, 1, -64)
+toggleBtn.AnchorPoint = Vector2.new(1, 1)
+toggleBtn.BackgroundColor3 = C.panel
+toggleBtn.BackgroundTransparency = 0.15
+toggleBtn.Text = "🎧"
+toggleBtn.TextColor3 = C.txt
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 22
+toggleBtn.ZIndex = 10
+corner(23).Parent = toggleBtn
+stroke().Parent = toggleBtn
+toggleBtn.Parent = screen
+
+local guiHidden = false
+local function toggleGui()
+    guiHidden = not guiHidden
+    main.Visible = not guiHidden
+    toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
+end
+toggleBtn.Activated:Connect(toggleGui)
+UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == TOGGLE_KEY then toggleGui() end
 end)
 
 -- ── start ─────────────────────────────────────────────────
