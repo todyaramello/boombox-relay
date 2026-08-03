@@ -320,19 +320,36 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable (works on mobile; input is marked processed so the camera
--- doesn't rotate while dragging, and the drag keeps tracking the touch
--- even if the titlebar slides off-screen)
+-- draggable (works on mobile). The camera is locked to Scriptable while
+-- dragging so the touch controller can't rotate it, and the drag keeps
+-- tracking the touch even if the titlebar slides off-screen.
 local dragging = nil
+local savedCamType = nil
+
+local function endDrag()
+    if not dragging then return end
+    dragging = nil
+    if savedCamType and workspace.CurrentCamera then
+        pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
+    end
+    savedCamType = nil
+end
+
 UIS.InputBegan:Connect(function(input, processed)
-    if dragging or processed then return end
+    if processed then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
+    if dragging then endDrag() end
     local p = input.Position
     local tb = titlebar.AbsolutePosition
     local ts = titlebar.AbsoluteSize
     if p.X >= tb.X and p.X <= tb.X + ts.X and p.Y >= tb.Y and p.Y <= tb.Y + ts.Y then
         dragging = { input = input, startPos = main.Position, startInput = p }
         input.Processed = true
+        local cam = workspace.CurrentCamera
+        if cam then
+            savedCamType = cam.CameraType
+            pcall(function() cam.CameraType = Enum.CameraType.Scriptable end)
+        end
     end
 end)
 UIS.InputChanged:Connect(function(input)
@@ -345,7 +362,7 @@ UIS.InputChanged:Connect(function(input)
 end)
 UIS.InputEnded:Connect(function(input)
     if dragging and input == dragging.input then
-        dragging = nil
+        endDrag()
     end
 end)
 
