@@ -263,8 +263,8 @@ end
 
 -- adaptive size: shrinks on small screens
 local vp = screen.AbsoluteSize
-local GUI_W = math.clamp(vp.X * 0.78, 230, 320)
-local GUI_H = math.clamp(vp.Y * 0.62, 330, 460)
+local GUI_W = math.clamp(vp.X * 0.75, 220, 310)
+local GUI_H = math.clamp(vp.Y * 0.55, 310, 440)
 local LIST_H = math.max(GUI_H - 230, 90)
 
 local main = Instance.new("Frame")
@@ -322,9 +322,9 @@ statusText.Parent = titlebar
 
 -- draggable (works on mobile). The camera is locked to Scriptable while
 -- dragging (re-forced every frame in case the game resets it) so the touch
--- camera controller can't rotate the camera, and the drag keeps tracking
--- the touch even if the dragged object slides off-screen. Objects stay
--- fully on-screen (no more getting stuck half off the edge).
+-- camera controller can't rotate the camera. Movement uses per-event
+-- deltas (TouchMoved) instead of absolute positions so it never fights
+-- the finger, and the dragged object stays fully on-screen.
 local dragging = nil
 local savedCamType = nil
 local lastDragMoved = 0
@@ -352,52 +352,85 @@ local function endDrag()
     savedCamType = nil
 end
 
-local function tryBeginDrag(input, hitObj, dragObj)
-    local p = input.Position
+local function isOn(hitObj, pos)
     local ab = hitObj.AbsolutePosition
     local as = hitObj.AbsoluteSize
-    if p.X < ab.X or p.X > ab.X + as.X or p.Y < ab.Y or p.Y > ab.Y + as.Y then return end
-    dragging = { input = input, obj = dragObj, start = dragObj.Position, startInput = p, moved = false }
-    input.Processed = true
-    lockCamera()
+    return pos.X >= ab.X and pos.X <= ab.X + as.X and pos.Y >= ab.Y and pos.Y <= ab.Y + as.Y
 end
 
-UIS.InputBegan:Connect(function(input, processed)
-    if processed then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 and input.UserInputType ~= Enum.UserInputType.Touch then return end
-    if dragging then endDrag() end
-    tryBeginDrag(input, titlebar, main)
-    if not dragging then tryBeginDrag(input, toggleBtn, toggleBtn) end
-end)
-
-task.spawn(function()
-    while true do
-        if dragging then lockCamera() end
-        task.wait()
-    end
-end)
-
-UIS.InputChanged:Connect(function(input)
-    if not dragging or input ~= dragging.input then return end
-    if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    local delta = input.Position - dragging.startInput
-    if delta.Magnitude > 8 then dragging.moved = true end
+local function applyMove()
+    local d = dragging
     local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
-    local o = dragging.obj
+    local o = d.obj
     local ax, ay = o.AnchorPoint.X, o.AnchorPoint.Y
     local ow, oh = o.AbsoluteSize.X, o.AbsoluteSize.Y
     local minX, maxX = ax * ow, sw - (1 - ax) * ow
     local minY, maxY = ay * oh, sh - (1 - ay) * oh
     if minX > maxX then minX, maxX = sw / 2, sw / 2 end
     if minY > maxY then minY, maxY = sh / 2, sh / 2 end
-    local px = dragging.start.X.Scale * sw + dragging.start.X.Offset + delta.X
-    local py = dragging.start.Y.Scale * sh + dragging.start.Y.Offset + delta.Y
-    o.Position = UDim2.fromOffset(math.clamp(px, minX, maxX), math.clamp(py, minY, maxY))
+    o.Position = UDim2.fromOffset(
+        math.clamp(d.startX + d.acc.X, minX, maxX),
+        math.clamp(d.startY + d.acc.Y, minY, maxY)
+    )
+end
+
+local function beginDrag(input, hitObj, dragObj)
+    if not isOn(hitObj, input.Position) then return false end
+    local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
+    dragging = {
+        input = input,
+        obj = dragObj,
+        startX = dragObj.Position.X.Scale * sw + dragObj.Position.X.Offset,
+        startY = dragObj.Position.Y.Scale * sh + dragObj.Position.Y.Offset,
+        lastPos = input.Position,
+        acc = Vector2.new(0, 0),
+        moved = false,
+    }
+    input.Processed = true
+    lockCamera()
+    return true
+end
+
+-- touch (mobile)
+UIS.TouchStarted:Connect(function(touch, processed)
+    if processed then return end
+    if dragging then endDrag() end
+    if not beginDrag(touch, titlebar, main) then beginDrag(touch, toggleBtn, toggleBtn) end
+end)
+UIS.TouchMoved:Connect(function(touch, processed, delta)
+    if not dragging or touch ~= dragging.input then return end
+    dragging.acc = dragging.acc + delta
+    dragging.moved = true
+    applyMove()
+end)
+UIS.TouchEnded:Connect(function(touch)
+    if dragging and touch == dragging.input then endDrag() end
 end)
 
+-- mouse
+UIS.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if dragging then endDrag() end
+    if not beginDrag(input, titlebar, main) then beginDrag(input, toggleBtn, toggleBtn) end
+end)
+UIS.InputChanged:Connect(function(input)
+    if not dragging or input ~= dragging.input then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    local delta = input.Position - dragging.lastPos
+    dragging.acc = dragging.acc + delta
+    dragging.lastPos = input.Position
+    dragging.moved = true
+    applyMove()
+end)
 UIS.InputEnded:Connect(function(input)
-    if dragging and input == dragging.input then
-        endDrag()
+    if dragging and input == dragging.input then endDrag() end
+end)
+
+task.spawn(function()
+    while true do
+        if dragging then lockCamera() end
+        task.wait()
     end
 end)
 
