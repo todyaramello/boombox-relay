@@ -386,7 +386,7 @@ local function beginDrag(input, hitObj, dragObj)
         acc = Vector2.new(0, 0),
         moved = false,
     }
-    input.Processed = true
+    pcall(function() input.Processed = true end)
     lockCamera()
     return true
 end
@@ -397,9 +397,11 @@ UIS.TouchStarted:Connect(function(touch, processed)
     if dragging then endDrag() end
     if not beginDrag(touch, titlebar, main) then beginDrag(touch, toggleBtn, toggleBtn) end
 end)
-UIS.TouchMoved:Connect(function(touch, processed, delta)
+UIS.TouchMoved:Connect(function(touch)
     if not dragging or touch ~= dragging.input then return end
+    local delta = touch.Position - dragging.lastPos
     dragging.acc = dragging.acc + delta
+    dragging.lastPos = touch.Position
     dragging.moved = true
     applyMove()
 end)
