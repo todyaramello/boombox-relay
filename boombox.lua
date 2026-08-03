@@ -425,6 +425,9 @@ local function connectToServer()
         pcallLog("dumpWs", function() dumpWs(resB) end)
         pcallLog("wireEvents", function() wireEvents(resB) end)
         ws = { style = "obj", obj = resB, lib = lib, send = sendFn, close = closeFn }
+        setStatus(true)
+        print("[Boombox] Connected to relay")
+        sendMsg({ type = "join", user = displayName() })
         return true
     end
     if not okB then print("[Boombox] callback-table connect failed: " .. tostring(errB)) end
@@ -1219,7 +1222,7 @@ end)
 -- ══════════════════════════════════════════════════════════
 loadPlaylist()
 rebuildList()
-setStatus(false)
+setStatus(connected)
 task.spawn(function()
     local g = getgenv()
     local fn = g.request or g.http_request or (g.syn and g.syn.request)
