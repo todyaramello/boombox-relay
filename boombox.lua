@@ -12,8 +12,34 @@
 ]]
 
 getgenv().Boombox = getgenv().Boombox or {}
-if getgenv().Boombox.Running then return end
-getgenv().Boombox.Running = true
+local BB = getgenv().Boombox
+if BB.Running then
+    BB.Running = false
+    task.wait()
+    pcall(function()
+        if BB.Cleanup then BB.Cleanup() end
+    end)
+end
+BB.Running = true
+
+-- re-running the script cleans up the old instance instead of doing nothing,
+-- so you always get the newest code when you paste it again.
+local _cleanup = {}
+local function onCleanup(fn) _cleanup[#_cleanup + 1] = fn end
+local function bind(sig, cb)
+    local ok, c = pcall(function() return sig:Connect(cb) end)
+    if ok and c then onCleanup(function() pcall(function() c:Disconnect() end) end) end
+    return c
+end
+
+-- Delta reports touch positions as Vector3; GUI math needs Vector2.
+local function toV2(v)
+    local t = typeof(v)
+    if t == "Vector2" then return v end
+    if t == "Vector3" then return Vector2.new(v.X, v.Y) end
+    if v and v.Position then return toV2(v.Position) end
+    return Vector2.zero
+end
 
 local Players    = game:GetService("Players")
 local Tween      = game:GetService("TweenService")
@@ -108,7 +134,7 @@ local function bindEvent(obj, name, cb)
     if not obj then return end
     local ok, v = pcall(function() return obj[name] end)
     if not ok or v == nil then pcall(function() obj[name] = cb end) return end
-    if type(v) == "function" then pcall(v, cb) else pcall(function() v:Connect(cb) end) end
+    if type(v) == "function" then pcall(v, cb) else pcall(function() v:bind(cb) end) end
 end
 
 local function wsSend(obj, text)
@@ -207,7 +233,7 @@ local function connectToServer()
 end
 
 task.spawn(function()
-    while getgenv().Boombox.Running do
+    while BB.Running do
         if not ws then
             local bad = WS_URL:find("YOUR%-URL") ~= nil
             if bad then
@@ -353,8 +379,10 @@ local function endDrag()
 end
 
 local function isOn(hitObj, pos)
-    local ab = hitObj.AbsolutePosition
-    local as = hitObj.AbsoluteSize
+    if not hitObj then return false end
+    local ok, ab = pcall(function() return hitObj.AbsolutePosition end)
+    local ok2, as = pcall(function() return hitObj.AbsoluteSize end)
+    if not ok or not ok2 then return false end
     return pos.X >= ab.X and pos.X <= ab.X + as.X and pos.Y >= ab.Y and pos.Y <= ab.Y + as.Y
 end
 
@@ -375,14 +403,15 @@ local function applyMove()
 end
 
 local function beginDrag(input, hitObj, dragObj)
-    if not isOn(hitObj, input.Position) then return false end
+    local pos = toV2(input)
+    if not isOn(hitObj, pos) then return false end
     local sw, sh = screen.AbsoluteSize.X, screen.AbsoluteSize.Y
     dragging = {
         input = input,
         obj = dragObj,
         startX = dragObj.Position.X.Scale * sw + dragObj.Position.X.Offset,
         startY = dragObj.Position.Y.Scale * sh + dragObj.Position.Y.Offset,
-        lastPos = input.Position,
+        lastPos = pos,
         acc = Vector2.new(0, 0),
         moved = false,
     }
@@ -392,45 +421,51 @@ local function beginDrag(input, hitObj, dragObj)
 end
 
 -- touch (mobile)
-UIS.TouchStarted:Connect(function(touch, processed)
+bind(UIS.TouchStarted, function(touch, processed)
     if processed then return end
     if dragging then endDrag() end
-    if not beginDrag(touch, titlebar, main) then beginDrag(touch, toggleBtn, toggleBtn) end
+    if not beginDrag(touch, titlebar, main) and toggleBtn then
+        beginDrag(touch, toggleBtn, toggleBtn)
+    end
 end)
-UIS.TouchMoved:Connect(function(touch)
+bind(UIS.TouchMoved, function(touch)
     if not dragging or touch ~= dragging.input then return end
-    local delta = touch.Position - dragging.lastPos
+    local pos = toV2(touch.Position)
+    local delta = pos - dragging.lastPos
     dragging.acc = dragging.acc + delta
-    dragging.lastPos = touch.Position
+    dragging.lastPos = pos
     dragging.moved = true
     applyMove()
 end)
-UIS.TouchEnded:Connect(function(touch)
+bind(UIS.TouchEnded, function(touch)
     if dragging and touch == dragging.input then endDrag() end
 end)
 
 -- mouse
-UIS.InputBegan:Connect(function(input, processed)
+bind(UIS.InputBegan, function(input, processed)
     if processed then return end
     if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
     if dragging then endDrag() end
-    if not beginDrag(input, titlebar, main) then beginDrag(input, toggleBtn, toggleBtn) end
+    if not beginDrag(input, titlebar, main) and toggleBtn then
+        beginDrag(input, toggleBtn, toggleBtn)
+    end
 end)
-UIS.InputChanged:Connect(function(input)
+bind(UIS.InputChanged, function(input)
     if not dragging or input ~= dragging.input then return end
     if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    local delta = input.Position - dragging.lastPos
+    local pos = toV2(input.Position)
+    local delta = pos - dragging.lastPos
     dragging.acc = dragging.acc + delta
-    dragging.lastPos = input.Position
+    dragging.lastPos = pos
     dragging.moved = true
     applyMove()
 end)
-UIS.InputEnded:Connect(function(input)
+bind(UIS.InputEnded, function(input)
     if dragging and input == dragging.input then endDrag() end
 end)
 
 task.spawn(function()
-    while true do
+    while BB.Running do
         if dragging then lockCamera() end
         task.wait()
     end
@@ -553,18 +588,18 @@ local function setVolFromX(x)
     pctLabel.Text = math.floor(volume * 100) .. "%"
     if currentSound then pcall(function() currentSound.Volume = volume end) end
 end
-volBar.InputBegan:Connect(function(input)
+volBar.InputBegan:bind(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         draggingVol = true
         setVolFromX(input.Position.X)
     end
 end)
-volBar.InputChanged:Connect(function(input)
+volBar.InputChanged:bind(function(input)
     if draggingVol and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         setVolFromX(input.Position.X)
     end
 end)
-volBar.InputEnded:Connect(function(input)
+volBar.InputEnded:bind(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         draggingVol = false
     end
@@ -693,8 +728,8 @@ local function rebuildList()
         hit.Text = ""
         hit.Parent = row
 
-        hit.Activated:Connect(function() playAudio(entry.id, entry.name) end)
-        del.Activated:Connect(function()
+        hit.Activated:bind(function() playAudio(entry.id, entry.name) end)
+        del.Activated:bind(function()
             playlist[entry] = nil
             local clean = {}
             for _, e in ipairs(playlist) do if e then clean[#clean + 1] = e end end
@@ -709,13 +744,13 @@ local function rebuildList()
 end
 
 -- ── actions ───────────────────────────────────────────────
-playBtn.Activated:Connect(function()
+playBtn.Activated:bind(function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     playAudio(id)
 end)
 
-saveBtn.Activated:Connect(function()
+saveBtn.Activated:bind(function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     for _, e in ipairs(playlist) do
@@ -735,12 +770,12 @@ saveBtn.Activated:Connect(function()
     end)
 end)
 
-stopBtn.Activated:Connect(function()
+stopBtn.Activated:bind(function()
     stopAudio()
     sendMsg({ type = "stop", user = displayName() })
 end)
 
-clearBtn.Activated:Connect(function()
+clearBtn.Activated:bind(function()
     playlist = {}
     savePlaylist()
     rebuildList()
@@ -772,7 +807,7 @@ end
 
 -- single tap = show/hide GUI, double tap = reset positions
 local lastTap = 0
-toggleBtn.Activated:Connect(function()
+toggleBtn.Activated:bind(function()
     if os.clock() - lastDragMoved < 0.3 then return end
     local now = os.clock()
     if now - lastTap < 0.35 then
@@ -785,7 +820,7 @@ toggleBtn.Activated:Connect(function()
     lastTap = now
 end)
 
-UIS.InputBegan:Connect(function(input, processed)
+UIS.InputBegan:bind(function(input, processed)
     if processed then return end
     if input.KeyCode == TOGGLE_KEY then toggleGui() end
 end)
@@ -795,5 +830,19 @@ loadPlaylist()
 rebuildList()
 setStatus(false)
 toast("Boombox loaded — set WS_URL to connect")
+
+BB.Cleanup = function()
+    BB.Running = false
+    local conns = _cleanup
+    _cleanup = {}
+    for i = #conns, 1, -1 do pcall(conns[i]) end
+    stopAudio()
+    pcall(function() if screen then screen:Destroy() end end)
+    pcall(function()
+        local cam = workspace.CurrentCamera
+        if cam and savedCamType then cam.CameraType = savedCamType end
+    end)
+    savedCamType = nil
+end
 
 print("[Boombox] loaded. WS_URL = " .. WS_URL)
