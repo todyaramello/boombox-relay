@@ -47,6 +47,62 @@ local ws           = nil
 local connected    = false
 local nowPlaying   = ""
 
+-- ── log buffer + auto-upload (paste.rs → dpaste → clipboard) ─
+local logBuffer = {}
+local _origPrint = print
+print = function(...)
+    local parts = {}
+    for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
+    local line = table.concat(parts, " ")
+    _origPrint(line)
+    if line:find("Boombox", 1, true) then
+        logBuffer[#logBuffer + 1] = line
+        if #logBuffer > 300 then
+            for i = 1, #logBuffer - 300 do table.remove(logBuffer, 1) end
+        end
+    end
+end
+
+local function httpPost(url, body, json)
+    local g = getgenv()
+    local fn = g.request or g.http_request or (g.syn and g.syn.request)
+    if not fn then return nil, "no request fn" end
+    local headers = json and { ["Content-Type"] = "application/json" } or { ["Content-Type"] = "text/plain" }
+    local ok, res = pcall(function()
+        return fn({ Url = url, Method = "POST", Headers = headers, Body = body })
+    end)
+    if ok and res then
+        return tostring(res.Body or ""), res.StatusCode == 200 or res.StatusCode == 201
+    end
+    return nil, false
+end
+
+local function dumpLogs()
+    local text = "=== Boombox log dump ===\n" .. table.concat(logBuffer, "\n")
+    local clip = getgenv().setclipboard or setclipboard
+    if clip then
+        pcall(clip, text)
+        print("[Boombox] combined log copied to clipboard")
+    end
+    local url, ok = httpPost("https://paste.rs/", text)
+    if ok and url and url:match("^https?://") then
+        print("[Boombox] LOG URL: " .. url)
+        if clip then pcall(clip, url) end
+        return
+    end
+    print("[Boombox] paste.rs failed (" .. tostring(url) .. ") — trying dpaste")
+    local body, ok2 = httpPost("https://dpaste.org/api/", Http:JSONEncode({ content = text, title = "boombox log", syntax = "text" }), true)
+    if ok2 and body then
+        local okj, j = pcall(function() return Http:JSONDecode(body) end)
+        if okj and type(j) == "table" and j.url then
+            print("[Boombox] LOG URL: " .. tostring(j.url))
+            if clip then pcall(clip, j.url) end
+            return
+        end
+    end
+    print("[Boombox] dpaste failed too (" .. tostring(body) .. ")")
+end
+
 local function displayName()
     return pcall(function() return LP.DisplayName end) and LP.DisplayName or LP.Name or "Player"
 end
@@ -412,6 +468,13 @@ task.spawn(function()
         end
         task.wait(5)
     end
+end)
+
+task.spawn(function()
+    task.wait(15)
+    dumpLogs()
+    task.wait(60)
+    dumpLogs()
 end)
 
 -- ══════════════════════════════════════════════════════════
