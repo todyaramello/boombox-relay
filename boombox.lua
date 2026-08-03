@@ -259,6 +259,8 @@ local function wireEvent(h, name, fn)
     end
     pcall(function() h[name] = fn end)
     pcall(function() h[name](h, fn) end)
+    pcall(function() h:Connect(name, fn) end)
+    pcall(function() h.Connect(h, name, fn) end)
 end
 
 local function wireEvents(h)
@@ -273,6 +275,12 @@ local function wireEvents(h)
         local lname = e[1]:gsub("^On", "on")
         if lname ~= e[1] then wireEvent(h, lname, e[2]) end
     end
+end
+
+local function pcallLog(label, fn)
+    local ok, err = pcall(fn)
+    if not ok then print("[Boombox] ERROR in " .. label .. ": " .. tostring(err)) end
+    return ok, err
 end
 
 local function dumpWs(h)
@@ -301,7 +309,18 @@ local function dumpWs(h)
                     print("[Boombox]   index." .. tostring(k) .. " = " .. type(v))
                 end
             end)
+        elseif type(idx) == "function" then
+            print("[Boombox]   meta.__index = <function>")
         end
+    else
+        print("[Boombox]   getmetatable -> " .. (mtOk and tostring(mt) or "ERR"))
+    end
+    local probes = { "Send", "send", "Close", "close", "Disconnect", "disconnect",
+        "OnMessage", "OnOpen", "OnClose", "OnError", "onMessage", "onOpen", "onClose", "onError",
+        "Connect", "connect", "Message", "message", "ReadyState", "readyState", "State", "state", "IsOpen", "isOpen" }
+    for _, n in ipairs(probes) do
+        local ok, v = pcall(function() return h[n] end)
+        print("[Boombox]   probe " .. n .. " = " .. (ok and type(v) or "ERR"))
     end
 end
 
@@ -403,8 +422,8 @@ local function connectToServer()
     local okB, errB = pcall(function() resB = connectFn(WS_URL, callbacks) end)
     if okB and resB ~= nil then
         print("[Boombox] connect returned handle=" .. tostring(resB))
-        dumpWs(resB)
-        wireEvents(resB)
+        pcallLog("dumpWs", function() dumpWs(resB) end)
+        pcallLog("wireEvents", function() wireEvents(resB) end)
         ws = { style = "obj", obj = resB, lib = lib, send = sendFn, close = closeFn }
         return true
     end
@@ -433,8 +452,8 @@ local function connectToServer()
         return false
     end
     print("[Boombox] plain connect returned handle=" .. tostring(resA))
-    dumpWs(resA)
-    wireEvents(resA)
+    pcallLog("dumpWs", function() dumpWs(resA) end)
+    pcallLog("wireEvents", function() wireEvents(resA) end)
     ws = { style = "obj", obj = resA, lib = lib, send = sendFn, close = closeFn }
     return true
 end
@@ -443,29 +462,31 @@ local libWarned = false
 local stuckLogged = 0
 task.spawn(function()
     while BB.Running do
-        if not ws then
-            local bad = WS_URL:find("YOUR%-URL") ~= nil
-            if bad then
-                setStatus(false)
-                toast("Put your relay URL at WS_URL in the script!")
-            else
-                if not getWsLib() then
-                    if not libWarned then
-                        libWarned = true
-                        print("[Boombox] No websocket lib found (checked websocket/WebSocket/syn/fluxus/http)")
-                    end
+        pcallLog("reconnect-loop", function()
+            if not ws then
+                local bad = WS_URL:find("YOUR%-URL") ~= nil
+                if bad then
+                    setStatus(false)
+                    toast("Put your relay URL at WS_URL in the script!")
                 else
-                    print("[Boombox] ws is nil, attempting connect...")
-                    connectToServer()
-                    if not connected then task.wait(1) end
+                    if not getWsLib() then
+                        if not libWarned then
+                            libWarned = true
+                            print("[Boombox] No websocket lib found (checked websocket/WebSocket/syn/fluxus/http)")
+                        end
+                    else
+                        print("[Boombox] ws is nil, attempting connect...")
+                        connectToServer()
+                        if not connected then task.wait(1) end
+                    end
+                end
+            else
+                if not connected and os.clock() - stuckLogged > 10 then
+                    stuckLogged = os.clock()
+                    print("[Boombox] no OnOpen yet. state: " .. (ws and ws.obj and probeConn(ws.obj) or "?"))
                 end
             end
-        else
-            if not connected and os.clock() - stuckLogged > 10 then
-                stuckLogged = os.clock()
-                print("[Boombox] no OnOpen yet. state: " .. (ws and ws.obj and probeConn(ws.obj) or "?"))
-            end
-        end
+        end)
         task.wait(5)
     end
 end)
