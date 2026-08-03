@@ -346,9 +346,125 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable: use Roblox's native Draggable so the whole window moves by its
--- top bar AND body on mouse/touch, without fighting buttons or the camera.
-main.Draggable = true
+-- draggable: ONLY the top bar is the drag handle (and the 🎧 toggle button can
+-- be dragged too). Uses plain UIS touch/mouse events because Delta doesn't
+-- support the native Draggable property. Touch positions are Vector2-normalized.
+local dragging = nil
+local savedCamType = nil
+
+local function lockCamera()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    if savedCamType == nil then savedCamType = cam.CameraType end
+    pcall(function()
+        if cam.CameraType ~= Enum.CameraType.Scriptable then
+            cam.CameraType = Enum.CameraType.Scriptable
+        end
+    end)
+end
+
+local function endDrag()
+    if not dragging then return end
+    dragging = nil
+    if savedCamType ~= nil and workspace.CurrentCamera then
+        pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
+    end
+    savedCamType = nil
+end
+
+local function isOn(hitObj, pos)
+    if not hitObj then return false end
+    local ok, ab = pcall(function() return hitObj.AbsolutePosition end)
+    local ok2, as = pcall(function() return hitObj.AbsoluteSize end)
+    if not ok or not ok2 then return false end
+    return pos.X >= ab.X and pos.X <= ab.X + as.X and pos.Y >= ab.Y and pos.Y <= ab.Y + as.Y
+end
+
+local function applyMove()
+    local d = dragging
+    local o = d.obj
+    local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or screen.AbsoluteSize
+    local ax, ay = o.AnchorPoint.X, o.AnchorPoint.Y
+    local ow, oh = o.AbsoluteSize.X, o.AbsoluteSize.Y
+    local minX, maxX = ax * ow, vp.X - (1 - ax) * ow
+    local minY, maxY = ay * oh, vp.Y - (1 - ay) * oh
+    if minX > maxX then minX, maxX = vp.X / 2, vp.X / 2 end
+    if minY > maxY then minY, maxY = vp.Y / 2, vp.Y / 2 end
+    o.Position = UDim2.fromOffset(
+        math.clamp(d.startAbs.X + d.acc.X, minX, maxX),
+        math.clamp(d.startAbs.Y + d.acc.Y, minY, maxY)
+    )
+end
+
+local function beginDrag(input, hitObj, dragObj)
+    local pos = toV2(input)
+    if not isOn(hitObj, pos) then return false end
+    dragging = {
+        input = input,
+        obj = dragObj,
+        lastPos = pos,
+        startPos = pos,
+        startAbs = toV2(dragObj.AbsolutePosition),
+        acc = Vector2.new(0, 0),
+    }
+    pcall(function() input.Processed = true end)
+    lockCamera()
+    return true
+end
+
+local function finishDrag(input)
+    if not dragging then return end
+    local tap = (toV2(input) - dragging.startPos).Magnitude < 15
+    if tap and dragging.obj == toggleBtn and toggleTap then
+        toggleTap()
+    end
+    endDrag()
+end
+
+-- mobile (touch)
+bind(UIS.TouchStarted, function(touch, processed)
+    if processed then return end
+    if dragging then endDrag() end
+    if beginDrag(touch, titlebar, main) then return end
+    if toggleBtn then beginDrag(touch, toggleBtn, toggleBtn) end
+end)
+bind(UIS.TouchMoved, function(touch)
+    if not dragging or touch ~= dragging.input then return end
+    local pos = toV2(touch.Position)
+    dragging.acc = dragging.acc + (pos - dragging.lastPos)
+    dragging.lastPos = pos
+    applyMove()
+end)
+bind(UIS.TouchEnded, function(touch)
+    if dragging and touch == dragging.input then finishDrag(touch) end
+end)
+
+-- desktop (mouse)
+bind(UIS.InputBegan, function(input, processed)
+    if processed then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+    if dragging then endDrag() end
+    if beginDrag(input, titlebar, main) then return end
+    if toggleBtn then beginDrag(input, toggleBtn, toggleBtn) end
+end)
+bind(UIS.InputChanged, function(input)
+    if not dragging or input ~= dragging.input then return end
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    local pos = toV2(input.Position)
+    dragging.acc = dragging.acc + (pos - dragging.lastPos)
+    dragging.lastPos = pos
+    applyMove()
+end)
+bind(UIS.InputEnded, function(input)
+    if dragging and input == dragging.input then finishDrag(input) end
+end)
+
+task.spawn(function()
+    while BB.Running do
+        if dragging then lockCamera() end
+        task.wait()
+    end
+end)
 
 local body = Instance.new("Frame")
 body.Position = UDim2.new(0, 0, 0, 44)
@@ -684,12 +800,9 @@ local function toggleGui()
     toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
 end
 
--- toggle button: native Draggable to move it, single tap = show/hide GUI,
--- double tap = reset positions (Roblox treats a drag as a drag, tap as a tap).
-toggleBtn.Draggable = true
-
+-- toggle button: tap = show/hide GUI, double tap = reset positions, drag = move it.
 local lastTap = 0
-bind(toggleBtn.Activated, function()
+local function toggleTap()
     local now = os.clock()
     if now - lastTap < 0.35 then
         main.Position = UDim2.fromScale(0.5, 0.5)
@@ -700,7 +813,7 @@ bind(toggleBtn.Activated, function()
         toggleGui()
     end
     lastTap = now
-end)
+end
 
 bind(UIS.InputBegan, function(input, processed)
     if processed then return end
