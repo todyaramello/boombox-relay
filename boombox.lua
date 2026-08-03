@@ -263,8 +263,8 @@ end
 
 -- adaptive size: shrinks on small screens
 local vp = screen.AbsoluteSize
-local GUI_W = math.clamp(vp.X * 0.85, 240, 340)
-local GUI_H = math.clamp(vp.Y * 0.7, 340, 500)
+local GUI_W = math.clamp(vp.X * 0.78, 230, 320)
+local GUI_H = math.clamp(vp.Y * 0.62, 330, 460)
 local LIST_H = math.max(GUI_H - 230, 90)
 
 local main = Instance.new("Frame")
@@ -657,17 +657,17 @@ end)
 -- ── toggle ────────────────────────────────────────────────
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Name = "BoomboxToggle"
-toggleBtn.Size = UDim2.fromOffset(46, 46)
-toggleBtn.Position = UDim2.new(1, -70, 1, -150)
+toggleBtn.Size = UDim2.fromOffset(38, 38)
+toggleBtn.Position = UDim2.new(1, -56, 1, -140)
 toggleBtn.AnchorPoint = Vector2.new(1, 1)
 toggleBtn.BackgroundColor3 = C.panel
 toggleBtn.BackgroundTransparency = 0.15
 toggleBtn.Text = "🎧"
 toggleBtn.TextColor3 = C.txt
 toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 22
+toggleBtn.TextSize = 18
 toggleBtn.ZIndex = 10
-corner(23).Parent = toggleBtn
+corner(19).Parent = toggleBtn
 stroke().Parent = toggleBtn
 toggleBtn.Parent = screen
 
