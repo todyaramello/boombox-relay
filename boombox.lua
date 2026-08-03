@@ -112,9 +112,20 @@ local function getWsLib()
         g.syn and g.syn.websocket, g.fluxus and g.fluxus.websocket,
         g.http and g.http.websocket,
     }
-    for _, lib in ipairs(c) do
-        if (type(lib) == "table" or type(lib) == "userdata") and lib.connect then
-            return lib
+    for i, lib in ipairs(c) do
+        if type(lib) == "table" or type(lib) == "userdata" then
+            if lib.connect or lib.Connect then
+                print("[Boombox] WS lib found at slot " .. i .. " (" .. tostring(lib) .. ")")
+                return lib
+            end
+        end
+    end
+    for i, lib in ipairs(c) do
+        if lib ~= nil then
+            print("[Boombox] WS candidate slot " .. i .. ": type=" .. type(lib)
+                .. " connect=" .. tostring(lib.connect ~= nil)
+                .. " Connect=" .. tostring(lib.Connect ~= nil)
+                .. " send=" .. tostring(lib.send ~= nil))
         end
     end
     return nil
@@ -130,28 +141,36 @@ end
 local function wsSend(conn, text)
     if not conn then return end
     if conn.style == "id" then
-        local lib = conn.lib
-        local id = conn.id
-        if lib.send then pcall(function() lib.send(id, text) end)
-        elseif lib.Send then pcall(function() lib.Send(id, text) end) end
+        if conn.send then pcall(function() conn.send(conn.id, text) end)
+        elseif conn.lib and conn.lib.send then pcall(function() conn.lib.send(conn.id, text) end)
+        elseif conn.lib and conn.lib.Send then pcall(function() conn.lib.Send(conn.id, text) end) end
+        if type(conn.id) == "table" or type(conn.id) == "userdata" then
+            if conn.id.Send then pcall(function() conn.id:Send(text) end)
+            elseif conn.id.send then pcall(function() conn.id:send(text) end) end
+        end
     else
         local obj = conn.obj
         if obj.Send then pcall(function() obj:Send(text) end)
-        elseif obj.send then pcall(function() obj:send(text) end) end
+        elseif obj.send then pcall(function() obj:send(text) end)
+        elseif conn.send then pcall(function() conn.send(text) end) end
     end
 end
 
 local function wsClose(conn)
     if not conn then return end
     if conn.style == "id" then
-        local lib = conn.lib
-        local id = conn.id
-        if lib.close then pcall(function() lib.close(id) end)
-        elseif lib.Close then pcall(function() lib.Close(id) end) end
+        if conn.close then pcall(function() conn.close(conn.id) end)
+        elseif conn.lib and conn.lib.close then pcall(function() conn.lib.close(conn.id) end)
+        elseif conn.lib and conn.lib.Close then pcall(function() conn.lib.Close(conn.id) end) end
+        if type(conn.id) == "table" or type(conn.id) == "userdata" then
+            if conn.id.Close then pcall(function() conn.id:Close() end)
+            elseif conn.id.close then pcall(function() conn.id:close() end) end
+        end
     else
         local obj = conn.obj
         if obj.Close then pcall(function() obj:Close() end)
-        elseif obj.close then pcall(function() obj:close() end) end
+        elseif obj.close then pcall(function() obj:close() end)
+        elseif conn.close then pcall(function() conn.close() end) end
     end
 end
 
@@ -228,32 +247,45 @@ end
 local function connectToServer()
     local lib = getWsLib()
     if not lib then return false end
-    local okA, resA = pcall(function() return lib.connect(WS_URL) end)
-    if okA and resA then
-        ws = { style = "obj", obj = resA }
+    local connectFn = lib.connect or lib.Connect
+    local sendFn = lib.send or lib.Send
+    local closeFn = lib.close or lib.Close
+    print("[Boombox] connecting to " .. WS_URL)
+    local okA, resA = pcall(function() return connectFn(WS_URL) end)
+    if okA and resA and type(resA) ~= "number" then
+        print("[Boombox] object-style connect returned: " .. tostring(resA))
+        ws = { style = "obj", obj = resA, send = sendFn, close = closeFn }
         bindEvent(resA, "OnMessage", handleMessage)
         bindEvent(resA, "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end)
-        bindEvent(resA, "OnClose", function() setStatus(false) ws = nil end)
-        bindEvent(resA, "OnError", function() setStatus(false) ws = nil end)
+        bindEvent(resA, "OnClose", function() setStatus(false) ws = nil print("[Boombox] Disconnected") end)
+        bindEvent(resA, "OnError", function(e) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(e)) end)
         return true
     end
+    if not okA then print("[Boombox] object-style connect failed: " .. tostring(resA)) end
     local resB = nil
-    local okB = pcall(function()
-        resB = lib.connect(WS_URL, {
+    local okB, errB = pcall(function()
+        resB = connectFn(WS_URL, {
             onOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
             onMessage = function(msg) handleMessage(msg) end,
             onClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
             onError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
+            OnOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
+            OnMessage = function(msg) handleMessage(msg) end,
+            OnClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
+            OnError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
         })
     end)
     if okB then
-        ws = { style = "id", id = resB, lib = lib }
+        print("[Boombox] callback-table connect returned id: " .. tostring(resB))
+        ws = { style = "id", id = resB, lib = lib, send = sendFn, close = closeFn }
         return true
     end
+    print("[Boombox] callback-table connect failed: " .. tostring(errB))
     return false
 end
 
 local libWarned = false
+local stuckLogged = 0
 task.spawn(function()
     while BB.Running do
         if not ws then
@@ -265,12 +297,18 @@ task.spawn(function()
                 if not getWsLib() then
                     if not libWarned then
                         libWarned = true
-                        toast("No websocket lib found — auto-connect skipped")
+                        print("[Boombox] No websocket lib found (checked websocket/WebSocket/syn/fluxus/http)")
                     end
                 else
+                    print("[Boombox] ws is nil, attempting connect...")
                     connectToServer()
                     if not connected then task.wait(1) end
                 end
+            end
+        else
+            if not connected and os.clock() - stuckLogged > 10 then
+                stuckLogged = os.clock()
+                print("[Boombox] handle exists but no OnOpen yet (waiting...)")
             end
         end
         task.wait(5)
@@ -999,7 +1037,10 @@ end)
 loadPlaylist()
 rebuildList()
 setStatus(false)
-toast("Boombox loaded — set WS_URL to connect")
+print("[Boombox] loaded on " .. (isMobile and "mobile" or "desktop")
+    .. " | viewport " .. tostring(VIEWPORT)
+    .. " | WS_URL " .. WS_URL)
+toast("Boombox loaded")
 
 BB.Cleanup = function()
     BB.Running = false
