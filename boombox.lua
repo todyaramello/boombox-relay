@@ -346,73 +346,9 @@ statusText.TextColor3 = C.dim
 statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
--- draggable: ONLY the top bar is the drag handle. Movement uses the same
--- GetMouseLocation approach as the MM2PepsiMenu (works on mouse AND touch),
--- and the camera is locked to Scriptable while dragging so it can't rotate.
-titlebar.Active = true
-
-local dragging = false
-local dragOffset = Vector2.new()
-local savedCamType = nil
-
-local function lockCamera()
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    if savedCamType == nil then savedCamType = cam.CameraType end
-    pcall(function()
-        if cam.CameraType ~= Enum.CameraType.Scriptable then
-            cam.CameraType = Enum.CameraType.Scriptable
-        end
-    end)
-end
-
-local function endDrag()
-    dragging = false
-    if savedCamType ~= nil and workspace.CurrentCamera then
-        pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
-    end
-    savedCamType = nil
-end
-
-local function clampWinToScreen()
-    local sz = main.AbsoluteSize
-    if sz.X <= 0 or sz.Y <= 0 then return end
-    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or screen.AbsoluteSize
-    local ax, ay = main.AnchorPoint.X, main.AnchorPoint.Y
-    local x = math.clamp(main.AbsolutePosition.X, ax * sz.X, vp.X - (1 - ax) * sz.X)
-    local y = math.clamp(main.AbsolutePosition.Y, ay * sz.Y, vp.Y - (1 - ay) * sz.Y)
-    main.Position = UDim2.new(0, x, 0, y)
-end
-
-bind(titlebar.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local mouse = UIS:GetMouseLocation()
-        dragOffset = Vector2.new(mouse.X - main.AbsolutePosition.X, mouse.Y - main.AbsolutePosition.Y)
-        dragging = true
-        lockCamera()
-    end
-end)
-
-bind(UIS.InputChanged, function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local mouse = UIS:GetMouseLocation()
-        main.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
-        clampWinToScreen()
-    end
-end)
-
-bind(UIS.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        if dragging then endDrag() end
-    end
-end)
-
-task.spawn(function()
-    while BB.Running do
-        if dragging then lockCamera() end
-        task.wait()
-    end
-end)
+-- draggable: use Roblox's native Draggable so the whole window moves by its
+-- top bar AND body on mouse/touch, without fighting buttons or the camera.
+main.Draggable = true
 
 local body = Instance.new("Frame")
 body.Position = UDim2.new(0, 0, 0, 44)
@@ -748,52 +684,22 @@ local function toggleGui()
     toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
 end
 
--- toggle button: drag it like the MM2PepsiMenu mobile button, single tap =
--- show/hide GUI, double tap = reset positions (drag vs tap by distance).
+-- toggle button: native Draggable to move it, single tap = show/hide GUI,
+-- double tap = reset positions (Roblox treats a drag as a drag, tap as a tap).
+toggleBtn.Draggable = true
+
 local lastTap = 0
-local btnDragging = false
-local btnStartPos = Vector2.new()
-local btnDragOffset = Vector2.new()
-
-bind(toggleBtn.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        btnStartPos = UIS:GetMouseLocation()
-        btnDragOffset = Vector2.new(btnStartPos.X - toggleBtn.AbsolutePosition.X, btnStartPos.Y - toggleBtn.AbsolutePosition.Y)
-        btnDragging = true
-        lockCamera()
+bind(toggleBtn.Activated, function()
+    local now = os.clock()
+    if now - lastTap < 0.35 then
+        main.Position = UDim2.fromScale(0.5, 0.5)
+        toggleBtn.Position = UDim2.new(1, -56, 1, -140)
+        toggleBtn.AnchorPoint = Vector2.new(1, 1)
+        toast("Boombox reset to center")
+    else
+        toggleGui()
     end
-end)
-
-bind(UIS.InputChanged, function(input)
-    if not btnDragging then return end
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
-        local pos = UIS:GetMouseLocation()
-        toggleBtn.Position = UDim2.new(0, pos.X - btnDragOffset.X, 0, pos.Y - btnDragOffset.Y)
-        toggleBtn.AnchorPoint = Vector2.new(0, 0)
-    end
-end)
-
-bind(toggleBtn.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-        if btnDragging then
-            btnDragging = false
-            local endPos = UIS:GetMouseLocation()
-            local moved = (Vector2.new(endPos.X, endPos.Y) - btnStartPos).Magnitude
-            if moved < 15 then
-                local now = os.clock()
-                if now - lastTap < 0.35 then
-                    main.Position = UDim2.fromScale(0.5, 0.5)
-                    toggleBtn.Position = UDim2.new(1, -56, 1, -140)
-                    toggleBtn.AnchorPoint = Vector2.new(1, 1)
-                    toast("Boombox reset to center")
-                else
-                    toggleGui()
-                end
-                lastTap = now
-            end
-            endDrag()
-        end
-    end
+    lastTap = now
 end)
 
 bind(UIS.InputBegan, function(input, processed)
@@ -814,11 +720,6 @@ BB.Cleanup = function()
     for i = #conns, 1, -1 do pcall(conns[i]) end
     stopAudio()
     pcall(function() if screen then screen:Destroy() end end)
-    pcall(function()
-        local cam = workspace.CurrentCamera
-        if cam and savedCamType then cam.CameraType = savedCamType end
-    end)
-    savedCamType = nil
 end
 
 print("[Boombox] loaded. WS_URL = " .. WS_URL)
