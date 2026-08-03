@@ -1,14 +1,10 @@
 --[[
   ════════════════════════════════════════════════════════════
-   Delta Boombox — websocket relayed audio player (with playlist)
-   ────────────────────────────────────────────────────────────
-   ▶ Everyone who runs this (executor OR web player) connects
-     to the same relay server. When anyone plays a song, the
-     relay broadcasts it and everyone hears it.
-   ▶ Playlist is saved locally (writefile) and shows song names.
-
-   SET THE URL BELOW to your relay server, then execute.
-   ════════════════════════════════════════════════════════════
+   Delta Boombox — websocket relayed audio player
+   UI copied 1:1 from MM2PepsiMenu (drag + mobile + sidebar tabs)
+   Everyone connected to the relay hears what you play.
+   Set WS_URL below, then execute.
+  ════════════════════════════════════════════════════════════
 ]]
 
 getgenv().Boombox = getgenv().Boombox or {}
@@ -32,24 +28,15 @@ local function bind(sig, cb)
     return c
 end
 
--- Delta reports touch positions as Vector3; GUI math needs Vector2.
-local function toV2(v)
-    local t = typeof(v)
-    if t == "Vector2" then return v end
-    if t == "Vector3" then return Vector2.new(v.X, v.Y) end
-    if v and v.Position then return toV2(v.Position) end
-    return Vector2.zero
-end
-
 local Players    = game:GetService("Players")
+local UIS        = game:GetService("UserInputService")
 local Tween      = game:GetService("TweenService")
 local Http       = game:GetService("HttpService")
-local UIS        = game:GetService("UserInputService")
 local SoundService = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 
-local WS_URL   = "wss://boombox-relay.wifiskeleton07.workers.dev"
+local WS_URL    = "wss://boombox-relay.wifiskeleton07.workers.dev"
 local SAVE_FILE = "boombox_playlist.json"
 local TOGGLE_KEY = Enum.KeyCode.Semicolon
 
@@ -115,7 +102,7 @@ local function loadPlaylist()
     end
 end
 
--- ── websocket (works with Delta / Synapse / Fluxus style) ─
+-- ── websocket (Delta / Synapse / Fluxus style) ────────────
 local function getWsLib()
     local g = getgenv()
     local c = {
@@ -151,14 +138,14 @@ local function sendMsg(data)
     return ok
 end
 
--- ── toast + status ────────────────────────────────────────
-local toastLabel, statusDot, statusText
+-- ── toast + status (guarded; GUI is built later) ──────────
+local toastLabel, statusLabel, npLabel
 
 local function toast(text)
     if not toastLabel then return end
     toastLabel.Text = text
     toastLabel.TextTransparency = 0
-    toastLabel.BackgroundTransparency = 0.25
+    toastLabel.BackgroundTransparency = 0.85
     local ti = Tween:Create(toastLabel, TweenInfo.new(2.2), { TextTransparency = 1, BackgroundTransparency = 1 })
     ti:Play()
     task.delay(2.2, function() ti:Cancel() toastLabel.TextTransparency = 1 toastLabel.BackgroundTransparency = 1 end)
@@ -166,9 +153,9 @@ end
 
 local function setStatus(ok)
     connected = ok
-    if not statusDot or not statusText then return end
-    statusDot.BackgroundColor3 = ok and Color3.fromRGB(34, 197, 94) or Color3.fromRGB(239, 68, 68)
-    statusText.Text = ok and "CONNECTED" or "OFFLINE"
+    if not statusLabel then return end
+    statusLabel.Text = (ok and "● CONNECTED" or "● OFFLINE") .. "   " .. WS_URL
+    statusLabel.TextColor3 = ok and Color3.fromRGB(90, 200, 120) or Color3.fromRGB(220, 90, 90)
 end
 
 -- ── audio ─────────────────────────────────────────────────
@@ -188,10 +175,12 @@ local function playLocal(id, name)
     currentSound.Parent = SoundService
     pcall(function() currentSound:Play() end)
     nowPlaying = name or ("Audio " .. id)
+    if npLabel then npLabel.Text = "Now playing: " .. nowPlaying end
     task.spawn(function()
         pcall(function() currentSound.Ended:Wait() end)
         if currentSound then stopAudio() end
         nowPlaying = ""
+        if npLabel then npLabel.Text = "Now playing: —" end
     end)
 end
 
@@ -248,490 +237,570 @@ task.spawn(function()
     end
 end)
 
--- ── GUI ───────────────────────────────────────────────────
-local C = {
-    bg = Color3.fromRGB(15, 18, 26),
-    panel = Color3.fromRGB(24, 29, 40),
-    row = Color3.fromRGB(32, 39, 54),
-    acc = Color3.fromRGB(0, 229, 255),
-    ok = Color3.fromRGB(34, 197, 94),
-    bad = Color3.fromRGB(239, 68, 68),
-    txt = Color3.fromRGB(232, 238, 247),
-    dim = Color3.fromRGB(139, 148, 167),
-    border = Color3.fromRGB(46, 58, 82),
-}
+-- ══════════════════════════════════════════════════════════
+--  GUI — MM2PepsiMenu style (drag + mobile + sidebar tabs)
+-- ══════════════════════════════════════════════════════════
+local isMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 
-local screen = Instance.new("ScreenGui")
-screen.Name = "BoomboxGui"
-screen.ResetOnSpawn = false
-screen.IgnoreGuiInset = true
-screen.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-screen.Parent = LP:WaitForChild("PlayerGui")
+local UG = Instance.new("ScreenGui")
+UG.ResetOnSpawn = false
+UG.Name = "BoomboxGui"
+UG.Parent = LP:WaitForChild("PlayerGui")
 
-local function corner(r)
-    local c = Instance.new("UICorner"); c.CornerRadius = UDim.new(0, r); return c
-end
-local function stroke()
-    local s = Instance.new("UIStroke"); s.Color = C.border; s.Thickness = 1; return s
-end
-local function makeBtn(name, col)
-    local b = Instance.new("TextButton")
-    b.Name = name
-    b.BackgroundColor3 = col
-    b.Text = name
-    b.TextColor3 = Color3.fromRGB(8, 19, 26)
-    b.Font = Enum.Font.GothamBold
-    b.TextSize = 14
-    b.AutoButtonColor = true
-    b.Parent = nil
-    return b
+local mobileGui
+if isMobile then
+    mobileGui = Instance.new("ScreenGui")
+    mobileGui.Name = "BoomboxMobile"
+    mobileGui.ResetOnSpawn = false
+    mobileGui.DisplayOrder = 999
+    mobileGui.Parent = LP:WaitForChild("PlayerGui")
 end
 
--- adaptive size: shrinks on small screens
-local vp = screen.AbsoluteSize
-local GUI_W = math.clamp(vp.X * 0.75, 220, 310)
-local GUI_H = math.clamp(vp.Y * 0.55, 310, 440)
-local LIST_H = math.max(GUI_H - 230, 90)
+local function Make(class, parent, props)
+    local inst = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        if k ~= "Parent" then inst[k] = v end
+    end
+    if parent then inst.Parent = parent end
+    return inst
+end
 
-local main = Instance.new("Frame")
-main.Size = UDim2.fromOffset(GUI_W, GUI_H)
-main.Position = UDim2.fromScale(0.5, 0.5)
-main.AnchorPoint = Vector2.new(0.5, 0.5)
-main.BackgroundColor3 = C.bg
-main.ClipsDescendants = true
-corner(14).Parent = main
-stroke().Parent = main
-main.Parent = screen
+local camV = workspace.CurrentCamera
+local VIEWPORT = camV and camV.ViewportSize or Vector2.new(1280, 720)
+local WINDOW_W = isMobile and math.clamp(VIEWPORT.X - 24, 280, 380) or 580
+local WINDOW_H = isMobile and math.clamp(VIEWPORT.Y * 0.55, 240, 320) or 460
+local TAB_W = math.floor(WINDOW_W * 0.24)
+local FONT = Enum.Font.Gotham
+local FONT_BOLD = Enum.Font.GothamBold
 
-local titlebar = Instance.new("Frame")
-titlebar.Size = UDim2.new(1, 0, 0, 44)
-titlebar.BackgroundColor3 = C.panel
-titlebar.Parent = main
-corner(14).Parent = titlebar
+local function clampWinToScreen(w)
+    if not w then return end
+    local sz = w.AbsoluteSize
+    if sz.X <= 0 or sz.Y <= 0 then return end
+    local vp = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or VIEWPORT
+    local x = math.clamp(w.AbsolutePosition.X, -sz.X + 40, vp.X - 40)
+    local y = math.clamp(w.AbsolutePosition.Y, 16, vp.Y - 40)
+    w.Position = UDim2.new(0, x, 0, y)
+end
 
-local titlebarUnder = Instance.new("Frame")
-titlebarUnder.Size = UDim2.new(1, 0, 0, 14)
-titlebarUnder.Position = UDim2.new(0, 0, 0, 30)
-titlebarUnder.BackgroundColor3 = C.panel
-titlebarUnder.ZIndex = -1
-titlebarUnder.Parent = main
+local TXT = Color3.fromRGB(200, 200, 200)
+local TXT_TITLE = Color3.fromRGB(230, 230, 230)
 
-local logo = Instance.new("TextLabel")
-logo.Size = UDim2.new(1, -60, 0, 44)
-logo.BackgroundTransparency = 1
-logo.Text = "🎧  BOOMBOX"
-logo.Font = Enum.Font.GothamBold
-logo.TextSize = 18
-logo.TextColor3 = C.txt
-logo.TextXAlignment = Enum.TextXAlignment.Left
-logo.Parent = titlebar
+local function RoundedFrame(parent, color, radius)
+    local f = Make("Frame", parent, {
+        BackgroundColor3 = color,
+        BorderSizePixel = 0,
+        ClipsDescendants = true
+    })
+    Make("UICorner", f, { CornerRadius = UDim.new(0, radius or 4) })
+    return f
+end
 
-statusDot = Instance.new("Frame")
-statusDot.Size = UDim2.fromOffset(10, 10)
-statusDot.Position = UDim2.new(1, -92, 0, 10)
-statusDot.AnchorPoint = Vector2.new(1, 0)
-statusDot.BackgroundColor3 = C.bad
-corner(5).Parent = statusDot
-statusDot.Parent = titlebar
+local _order = 0
+local function NextOrder() _order = _order + 1 return _order end
 
-statusText = Instance.new("TextLabel")
-statusText.Size = UDim2.fromOffset(60, 20)
-statusText.Position = UDim2.new(1, -72, 0, 12)
-statusText.AnchorPoint = Vector2.new(1, 0)
-statusText.BackgroundTransparency = 1
-statusText.Text = "OFFLINE"
-statusText.Font = Enum.Font.GothamBold
-statusText.TextSize = 11
-statusText.TextColor3 = C.dim
-statusText.TextXAlignment = Enum.TextXAlignment.Right
-statusText.Parent = titlebar
+local GRAD_NORM = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(40, 40, 40)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(60, 60, 60)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(130, 130, 130))
+})
+local GRAD_HOVER = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(55, 55, 55)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(75, 75, 75)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(150, 150, 150))
+})
+local GRAD_DOWN = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(30, 30, 30)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(45, 45, 45)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(100, 100, 100))
+})
 
--- draggable (rebuilt): grab the top bar to move the window, or the 🎧 toggle
--- button to move it. Uses ONLY UIS touch/mouse input events; movement is the
--- delta of InputObject.Position (the same coordinate space as AbsolutePosition
--- on mobile), accumulated from the grab point. No GetMouseLocation, no Draggable.
--- Drag handles are REGISTERED (addDragHandle) so this code never references
--- objects that are declared later in the script.
-local dragTarget = nil
-local dragTapFn = nil
-local dragStartAbs = nil
-local dragGrabPos = nil
-local dragLastPos = nil
-local dragAcc = Vector2.new(0, 0)
-local savedCamType = nil
+local function GradientBtn(parent, text, size)
+    local f = RoundedFrame(parent, Color3.new(1, 1, 1), 4)
+    f.Size = size or UDim2.new(1, 0, 0, isMobile and 34 or 26)
+    f.LayoutOrder = NextOrder()
+    local g = Make("UIGradient", f, {
+        Color = GRAD_NORM,
+        Rotation = 270
+    })
+    Make("UIStroke", f, { Color = Color3.new(0, 0, 0), Thickness = 1 })
+    Make("TextLabel", f, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = TXT,
+        TextSize = 14,
+        Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Center
+    })
+    local click = Make("TextButton", f, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    bind(click.MouseEnter, function() g.Color = GRAD_HOVER end)
+    bind(click.MouseLeave, function() g.Color = GRAD_NORM end)
+    bind(click.MouseButton1Down, function() g.Color = GRAD_DOWN end)
+    bind(click.MouseButton1Up, function() g.Color = GRAD_HOVER end)
+    return f, click
+end
 
-local function lockCamera()
-    local cam = workspace.CurrentCamera
-    if not cam then return end
-    if savedCamType == nil then savedCamType = cam.CameraType end
-    pcall(function()
-        if cam.CameraType ~= Enum.CameraType.Scriptable then
-            cam.CameraType = Enum.CameraType.Scriptable
+local function Slider(parent, text, min, max, default)
+    min = min or 0
+    max = max or 10
+    default = default or 1
+    local f = Make("Frame", parent, {
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder()
+    })
+    local valLabel = Make("TextLabel", f, {
+        Size = UDim2.new(1, 0, 0, 14),
+        BackgroundTransparency = 1,
+        Text = text .. " - " .. default,
+        TextColor3 = TXT,
+        TextSize = 13,
+        Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+    local track = RoundedFrame(f, Color3.fromRGB(40, 40, 40), 2)
+    track.Size = UDim2.new(1, 0, 0, 4)
+    track.Position = UDim2.new(0, 0, 0, 16)
+    local fill = RoundedFrame(track, Color3.fromRGB(60, 140, 240), 2)
+    fill.Size = UDim2.new((default - min) / (max - min), 0, 1, 0)
+    local thumb = Make("Frame", track, {
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, 12, 0, 12),
+        Position = UDim2.new((default - min) / (max - min), -6, 0.5, -6)
+    })
+    Make("UICorner", thumb, { CornerRadius = UDim.new(0, 6) })
+    Make("UIStroke", thumb, { Color = Color3.fromRGB(50, 50, 50), Thickness = 1 })
+    Make("UIGradient", thumb, {
+        Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, Color3.fromRGB(180, 180, 180)),
+            ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 120, 120))
+        }),
+        Rotation = 270
+    })
+    local curVal = default
+    local callback = nil
+    local function updateSlider(inputX)
+        local abs = track.AbsolutePosition.X
+        local siz = track.AbsoluteSize.X
+        local pct = math.clamp((inputX - abs) / siz, 0, 1)
+        curVal = min + pct * (max - min)
+        curVal = math.floor(curVal * 10 + 0.5) / 10
+        pct = (curVal - min) / (max - min)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        thumb.Position = UDim2.new(pct, -6, 0.5, -6)
+        valLabel.Text = text .. " - " .. curVal
+        if callback then callback(curVal) end
+    end
+    local sliding = false
+    local thumbBtn = Make("TextButton", thumb, {
+        Size = UDim2.new(1, 8, 1, 8),
+        Position = UDim2.new(0, -4, 0, -4),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    bind(thumbBtn.MouseButton1Down, function() sliding = true end)
+    local trackBtn = Make("TextButton", track, {
+        Size = UDim2.new(1, 0, 1, 16),
+        Position = UDim2.new(0, 0, 0, -8),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    bind(trackBtn.MouseButton1Down, function()
+        sliding = true
+        local mouse = UIS:GetMouseLocation()
+        updateSlider(mouse.X)
+    end)
+    bind(UIS.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sliding = false
         end
     end)
-end
-
-local function unlockCamera()
-    if savedCamType ~= nil and workspace.CurrentCamera then
-        pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
+    bind(UIS.InputChanged, function(input)
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            updateSlider(input.Position.X)
+        end
+    end)
+    local function SetCallback(cb) callback = cb end
+    local function SetValue(val)
+        curVal = math.clamp(val, min, max)
+        curVal = math.floor(curVal * 10 + 0.5) / 10
+        local pct = (curVal - min) / (max - min)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        thumb.Position = UDim2.new(pct, -6, 0.5, -6)
+        valLabel.Text = text .. " - " .. curVal
+        if callback then callback(curVal) end
     end
-    savedCamType = nil
+    return f, function() return curVal end, SetCallback, SetValue
 end
 
-local function isOn(inst, pos)
-    if not inst then return false end
-    local ok, ap = pcall(function() return inst.AbsolutePosition end)
-    local ok2, as = pcall(function() return inst.AbsoluteSize end)
-    if not ok or not ok2 then return false end
-    return pos.X >= ap.X and pos.X <= ap.X + as.X
-       and pos.Y >= ap.Y and pos.Y <= ap.Y + as.Y
+local function TextInput(parent, text, placeholder)
+    local f = Make("Frame", parent, {
+        Size = UDim2.new(1, 0, 0, 22),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder()
+    })
+    if text ~= "" then
+        Make("TextLabel", f, {
+            Size = UDim2.new(0, 80, 1, 0),
+            BackgroundTransparency = 1,
+            Text = text,
+            TextColor3 = TXT,
+            TextSize = 13,
+            Font = FONT,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextYAlignment = Enum.TextYAlignment.Center
+        })
+    end
+    local box = Make("TextBox", f, {
+        Size = UDim2.new(1, text ~= "" and -86 or 0, 1, -4),
+        Position = UDim2.new(0, text ~= "" and 84 or 0, 0, 2),
+        BackgroundColor3 = Color3.fromRGB(35, 35, 35),
+        TextColor3 = TXT,
+        TextSize = 13,
+        Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        ClearTextOnFocus = false,
+        Text = "",
+        PlaceholderText = placeholder or "",
+        PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+    })
+    Make("UIStroke", box, { Color = Color3.fromRGB(60, 60, 60), Thickness = 1 })
+    Make("UICorner", box, { CornerRadius = UDim.new(0, 3) })
+    Make("UIPadding", box, { PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) })
+    return f, box
 end
 
-local dragHandles = {}
-
-local function addDragHandle(hitObj, dragObj, onTap)
-    dragHandles[#dragHandles + 1] = { hit = hitObj, obj = dragObj, tap = onTap }
+local function ConfigLabel(parent, text)
+    local f = Make("Frame", parent, {
+        Size = UDim2.new(1, 0, 0, 20),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder()
+    })
+    Make("TextLabel", f, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = text,
+        TextColor3 = TXT,
+        TextSize = 12,
+        Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Left,
+        TextYAlignment = Enum.TextYAlignment.Center
+    })
+    return f
 end
 
-local function grab(input)
-    local pos = toV2(input)
-    for _, h in ipairs(dragHandles) do
-        if isOn(h.hit, pos) then
-            dragTarget = h.obj
-            dragTapFn = h.tap
-            dragStartAbs = toV2(h.obj.AbsolutePosition)
-            dragGrabPos = pos
-            dragLastPos = pos
-            dragAcc = Vector2.new(0, 0)
-            pcall(function() input.Processed = true end)
-            lockCamera()
+-- ══════════════════════════════════════════════════════════
+--  WINDOW
+-- ══════════════════════════════════════════════════════════
+local TBAR_H = 22
+local win = RoundedFrame(nil, Color3.fromRGB(56, 56, 56), 4)
+win.Size = UDim2.new(0, WINDOW_W, 0, WINDOW_H)
+win.Position = UDim2.new(0.5, -WINDOW_W / 2, 0.5, -WINDOW_H / 2)
+win.BackgroundTransparency = 0.4
+win.Parent = UG
+local winStroke = Make("UIStroke", win, { Color = Color3.new(0, 0, 0), Thickness = 1 })
+
+-- TITLEBAR
+local tbar = Make("Frame", win, {
+    BackgroundColor3 = Color3.fromRGB(45, 45, 45),
+    BorderSizePixel = 0,
+    Size = UDim2.new(1, 0, 0, TBAR_H),
+    BackgroundTransparency = 0.3
+})
+Make("TextLabel", tbar, {
+    Size = UDim2.new(1, 0, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "🎧 Boombox",
+    TextColor3 = TXT_TITLE,
+    TextSize = 13,
+    Font = FONT_BOLD,
+    TextXAlignment = Enum.TextXAlignment.Center,
+    TextYAlignment = Enum.TextYAlignment.Center
+})
+
+-- ══════════════════════════════════════════════════════════
+--  DRAG — copied 1:1 from MM2PepsiMenu
+-- ══════════════════════════════════════════════════════════
+local dragBtn = Make("TextButton", win, {
+    Size = UDim2.new(1, 0, 1, 0),
+    BackgroundTransparency = 1,
+    Text = "",
+    ZIndex = 1
+})
+
+local dragging = false
+local dragOffset = Vector2.new()
+
+local function isInteractive(obj)
+    while obj and obj ~= win do
+        if obj:IsA("TextButton") or obj:IsA("ImageButton") or obj:IsA("TextBox") then
             return true
         end
+        obj = obj.Parent
     end
     return false
 end
 
-local function moveTo(pos)
-    if not dragTarget then return end
-    local delta = pos - dragLastPos
-    dragLastPos = pos
-    dragAcc = dragAcc + delta
-    local o = dragTarget
-    local vp = (workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize) or screen.AbsoluteSize
-    local ow, oh = o.AbsoluteSize.X, o.AbsoluteSize.Y
-    local nx = math.clamp(dragStartAbs.X + dragAcc.X, 0, math.max(vp.X - ow, 0))
-    local ny = math.clamp(dragStartAbs.Y + dragAcc.Y, 0, math.max(vp.Y - oh, 0))
-    dragAcc = Vector2.new(nx - dragStartAbs.X, ny - dragStartAbs.Y)
-    local ax, ay = o.AnchorPoint.X, o.AnchorPoint.Y
-    o.Position = UDim2.new(0, nx + ax * ow, 0, ny + ay * oh)
-end
-
-local function release(input)
-    if not dragTarget then return end
-    local wasTap = (toV2(input) - dragGrabPos).Magnitude < 15
-    local tapFn = dragTapFn
-    dragTarget = nil
-    dragTapFn = nil
-    unlockCamera()
-    if wasTap and tapFn then pcall(tapFn) end
-end
-
-addDragHandle(titlebar, main)
-
--- mobile (touch)
-bind(UIS.TouchStarted, function(touch, processed)
-    if processed then return end
-    grab(touch)
-end)
-bind(UIS.TouchMoved, function(touch)
-    if dragTarget then moveTo(toV2(touch.Position)) end
-end)
-bind(UIS.TouchEnded, function(touch)
-    release(touch)
+bind(dragBtn.MouseButton1Down, function()
+    local mouse = UIS:GetMouseLocation()
+    local hit = LP.PlayerGui:GetGuiObjectsAtPosition(mouse.X, mouse.Y)
+    for _, v in ipairs(hit) do
+        if isInteractive(v) then return end
+    end
+    dragging = true
+    dragOffset = Vector2.new(mouse.X - win.AbsolutePosition.X, mouse.Y - win.AbsolutePosition.Y)
+    winStroke.Color = Color3.new(1, 1, 1)
 end)
 
--- desktop (mouse)
-bind(UIS.InputBegan, function(input, processed)
-    if processed then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    grab(input)
-end)
-bind(UIS.InputChanged, function(input)
-    if not dragTarget then return end
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    moveTo(toV2(input.Position))
-end)
 bind(UIS.InputEnded, function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
-    release(input)
-end)
-
-task.spawn(function()
-    while BB.Running do
-        if dragTarget then lockCamera() end
-        task.wait()
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        if dragging then
+            dragging = false
+            winStroke.Color = Color3.new(0, 0, 0)
+        end
     end
 end)
 
-local body = Instance.new("Frame")
-body.Position = UDim2.new(0, 0, 0, 44)
-body.Size = UDim2.new(1, 0, 1, -44)
-body.BackgroundTransparency = 1
-body.Parent = main
+bind(UIS.InputChanged, function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local mouse = UIS:GetMouseLocation()
+        win.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
+        clampWinToScreen(win)
+    end
+end)
 
-local pad = Instance.new("UIPadding")
-pad.PaddingTop = UDim.new(0, 12)
-pad.PaddingBottom = UDim.new(0, 12)
-pad.PaddingLeft = UDim.new(0, 12)
-pad.PaddingRight = UDim.new(0, 12)
-pad.Parent = body
-
-local layout = Instance.new("UIListLayout")
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 8)
-layout.Parent = body
-
--- id input row
-local inputRow = Instance.new("Frame")
-inputRow.Size = UDim2.new(1, 0, 0, 40)
-inputRow.BackgroundTransparency = 1
-inputRow.LayoutOrder = 1
-inputRow.Parent = body
-
-local idBox = Instance.new("TextBox")
-idBox.Size = UDim2.new(1, 0, 1, 0)
-idBox.BackgroundColor3 = C.row
-idBox.PlaceholderText = "Enter audio ID..."
-idBox.Text = ""
-idBox.TextColor3 = C.txt
-idBox.PlaceholderColor3 = C.dim
-idBox.Font = Enum.Font.Gotham
-idBox.TextSize = 15
-idBox.ClearTextOnFocus = false
-corner(8).Parent = idBox
-stroke().Parent = idBox
-idBox.Parent = inputRow
-
--- buttons row
-local btnRow = Instance.new("Frame")
-btnRow.Size = UDim2.new(1, 0, 0, 40)
-btnRow.BackgroundTransparency = 1
-btnRow.LayoutOrder = 2
-btnRow.Parent = body
-
-local btnLayout = Instance.new("UIListLayout")
-btnLayout.SortOrder = Enum.SortOrder.LayoutOrder
-btnLayout.Padding = UDim.new(0, 6)
-btnLayout.FillDirection = Enum.FillDirection.Horizontal
-btnLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-btnLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-btnLayout.Parent = btnRow
-
-local function addBtn(text, color, w)
-    local b = makeBtn(text, color)
-    b.Size = UDim2.new(0, w, 0, 34)
-    b.LayoutOrder = #btnRow:GetChildren() - 1
-    b.Parent = btnRow
-    corner(8).Parent = b
-    return b
+-- SIDEBAR
+local tabArea
+if isMobile then
+    tabArea = Make("ScrollingFrame", win, {
+        BackgroundColor3 = Color3.fromRGB(56, 56, 56),
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, TAB_W, 1, -TBAR_H),
+        Position = UDim2.new(0, 0, 0, TBAR_H),
+        BackgroundTransparency = 0.4,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ScrollingDirection = Enum.ScrollingDirection.Y
+    })
+    Make("UIListLayout", tabArea, { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder })
+    Make("UIPadding", tabArea, { PaddingTop = UDim.new(0, 6), PaddingBottom = UDim.new(0, 6), PaddingLeft = UDim.new(0, 4), PaddingRight = UDim.new(0, 4) })
+else
+    tabArea = Make("Frame", win, {
+        BackgroundColor3 = Color3.fromRGB(56, 56, 56),
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, TAB_W, 1, -TBAR_H),
+        Position = UDim2.new(0, 0, 0, TBAR_H),
+        BackgroundTransparency = 0.4
+    })
 end
 
-local playBtn = addBtn("▶ Play", C.acc, 96)
-local saveBtn = addBtn("＋ Save", C.ok, 96)
-local stopBtn = addBtn("■ Stop", C.bad, 84)
+Make("Frame", win, {
+    Size = UDim2.new(0, 1, 1, -TBAR_H),
+    Position = UDim2.new(0, TAB_W, 0, TBAR_H),
+    BackgroundColor3 = Color3.fromRGB(180, 180, 180),
+    BorderSizePixel = 0,
+    BackgroundTransparency = 0.5
+})
 
--- volume
-local volRow = Instance.new("Frame")
-volRow.Size = UDim2.new(1, 0, 0, 28)
-volRow.BackgroundTransparency = 1
-volRow.LayoutOrder = 3
-volRow.Parent = body
+local content = Make("Frame", win, {
+    BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+    BorderSizePixel = 0,
+    Size = UDim2.new(0, WINDOW_W - TAB_W - 1, 1, -TBAR_H),
+    Position = UDim2.new(0, TAB_W + 1, 0, TBAR_H),
+    BackgroundTransparency = 0.4
+})
 
-local volLabel = Instance.new("TextLabel")
-volLabel.Size = UDim2.fromOffset(34, 28)
-volLabel.BackgroundTransparency = 1
-volLabel.Text = "Vol"
-volLabel.Font = Enum.Font.GothamBold
-volLabel.TextSize = 13
-volLabel.TextColor3 = C.dim
-volLabel.Parent = volRow
+-- TABS
+local tabNames = { "Player", "Playlist" }
+local tabFrames = {}
+local TAB_SEL_GRAD = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 35, 35)),
+    ColorSequenceKeypoint.new(0.75, Color3.fromRGB(55, 55, 55)),
+    ColorSequenceKeypoint.new(1, Color3.fromRGB(120, 120, 120))
+})
 
-local volBar = Instance.new("Frame")
-volBar.Position = UDim2.new(0, 40, 0, 10)
-volBar.Size = UDim2.new(1, -40, 0, 8)
-volBar.BackgroundColor3 = C.row
-corner(4).Parent = volBar
-volBar.Parent = volRow
+for i, name in ipairs(tabNames) do
+    local sel = (i == 1)
+    local f = RoundedFrame(tabArea, Color3.new(1, 1, 1), 3)
+    if isMobile then
+        f.Size = UDim2.new(1, -8, 0, 34)
+        f.LayoutOrder = i
+    else
+        f.Size = UDim2.new(1, -14, 0, 26)
+        f.Position = UDim2.new(0, 7, 0, (i - 1) * 30 + 6)
+    end
+    Make("UIStroke", f, { Color = Color3.new(0, 0, 0), Thickness = 1 })
+    local tg = Make("UIGradient", f, { Color = sel and TAB_SEL_GRAD or GRAD_NORM, Rotation = 270 })
+    Make("TextLabel", f, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = name,
+        TextColor3 = sel and TXT_TITLE or TXT,
+        TextSize = 16,
+        Font = sel and FONT_BOLD or FONT,
+        TextXAlignment = Enum.TextXAlignment.Center,
+        TextYAlignment = Enum.TextYAlignment.Center
+    })
+    local click = Make("TextButton", f, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    if not sel then
+        bind(click.MouseEnter, function() tg.Color = GRAD_HOVER end)
+        bind(click.MouseLeave, function() tg.Color = GRAD_NORM end)
+    end
+    tabFrames[i] = { frame = f, click = click, tg = tg, name = name }
+end
 
-local volFill = Instance.new("Frame")
-volFill.Size = UDim2.new(1, 0, 1, 0)
-volFill.BackgroundColor3 = C.acc
-corner(4).Parent = volFill
-volFill.Parent = volBar
+-- CONTENT PAGES
+local pages = {}
+for i = 1, #tabNames do
+    local page = Make("ScrollingFrame", content, {
+        Size = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        ScrollBarThickness = 3,
+        ScrollBarImageColor3 = Color3.fromRGB(80, 80, 80),
+        CanvasSize = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        BorderSizePixel = 0,
+        Visible = (i == 1)
+    })
+    Make("UIListLayout", page, { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder })
+    Make("UIPadding", page, { PaddingTop = UDim.new(0, 4), PaddingBottom = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6), PaddingRight = UDim.new(0, 6) })
+    pages[i] = page
+end
 
-local pctLabel = Instance.new("TextLabel")
-pctLabel.Size = UDim2.fromOffset(40, 28)
-pctLabel.Position = UDim2.new(1, -40, 0, 0)
-pctLabel.BackgroundTransparency = 1
-pctLabel.Text = "100%"
-pctLabel.Font = Enum.Font.Gotham
-pctLabel.TextSize = 12
-pctLabel.TextColor3 = C.dim
-pctLabel.TextXAlignment = Enum.TextXAlignment.Right
-pctLabel.Parent = volRow
+-- Tab switching
+for i = 1, #tabNames do
+    bind(tabFrames[i].click.MouseButton1Click, function()
+        for j = 1, #tabNames do
+            pages[j].Visible = (j == i)
+            tabFrames[j].tg.Color = (j == i) and TAB_SEL_GRAD or GRAD_NORM
+            local lbl = tabFrames[j].frame:FindFirstChildOfClass("TextLabel")
+            if lbl then
+                lbl.TextColor3 = (j == i) and TXT_TITLE or TXT
+                lbl.Font = (j == i) and FONT_BOLD or FONT
+            end
+        end
+    end)
+end
 
-local draggingVol = false
-local function setVolFromX(x)
-    local ax = volBar.AbsolutePosition.X
-    local aw = volBar.AbsoluteSize.X
-    if aw <= 0 then return end
-    volume = math.clamp((x - ax) / aw, 0, 1)
-    volFill.Size = UDim2.new(volume, 0, 1, 0)
-    pctLabel.Text = math.floor(volume * 100) .. "%"
+-- ══════════════════════════════════════════════════════════
+--  PLAYER PAGE
+-- ══════════════════════════════════════════════════════════
+local playerPage = pages[1]
+local playlistPage = pages[2]
+
+local stFrame = ConfigLabel(playerPage, "Status: ...")
+statusLabel = stFrame:FindFirstChildOfClass("TextLabel")
+
+local npFrame = ConfigLabel(playerPage, "Now playing: —")
+npLabel = npFrame:FindFirstChildOfClass("TextLabel")
+
+local _, idBox = TextInput(playerPage, "Audio ID", "Enter audio ID...")
+
+local playRow = Make("Frame", playerPage, {
+    Size = UDim2.new(1, 0, 0, isMobile and 38 or 30),
+    BackgroundTransparency = 1,
+    LayoutOrder = NextOrder()
+})
+Make("UIListLayout", playRow, {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0, 6),
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
+local _, playClick = GradientBtn(playRow, "▶ Play", UDim2.new(0.5, -4, 1, 0))
+local _, stopClick = GradientBtn(playRow, "■ Stop", UDim2.new(0.5, -4, 1, 0))
+
+local _, _, volSetCb, _ = Slider(playerPage, "Volume", 0, 10, 10)
+volSetCb(function(v)
+    volume = v / 10
     if currentSound then pcall(function() currentSound.Volume = volume end) end
-end
-bind(volBar.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        draggingVol = true
-        setVolFromX(input.Position.X)
-    end
-end)
-bind(volBar.InputChanged, function(input)
-    if draggingVol and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        setVolFromX(input.Position.X)
-    end
-end)
-bind(volBar.InputEnded, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        draggingVol = false
-    end
 end)
 
--- playlist header
-local headRow = Instance.new("Frame")
-headRow.Size = UDim2.new(1, 0, 0, 22)
-headRow.BackgroundTransparency = 1
-headRow.LayoutOrder = 4
-headRow.Parent = body
+-- ══════════════════════════════════════════════════════════
+--  PLAYLIST PAGE
+-- ══════════════════════════════════════════════════════════
+local listRow = Make("Frame", playlistPage, {
+    Size = UDim2.new(1, 0, 0, isMobile and 38 or 30),
+    BackgroundTransparency = 1,
+    LayoutOrder = NextOrder()
+})
+Make("UIListLayout", listRow, {
+    FillDirection = Enum.FillDirection.Horizontal,
+    Padding = UDim.new(0, 6),
+    HorizontalAlignment = Enum.HorizontalAlignment.Center,
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
+local _, saveClick = GradientBtn(listRow, "＋ Save ID", UDim2.new(0.5, -4, 1, 0))
+local _, clearClick = GradientBtn(listRow, "✕ Clear", UDim2.new(0.5, -4, 1, 0))
 
-local listTitle = Instance.new("TextLabel")
-listTitle.Size = UDim2.new(1, 0, 1, 0)
-listTitle.BackgroundTransparency = 1
-listTitle.Text = "PLAYLIST (0)"
-listTitle.Font = Enum.Font.GothamBold
-listTitle.TextSize = 13
-listTitle.TextColor3 = C.txt
-listTitle.TextXAlignment = Enum.TextXAlignment.Left
-listTitle.Parent = headRow
-
-local clearBtn = Instance.new("TextButton")
-clearBtn.Size = UDim2.fromOffset(48, 22)
-clearBtn.Position = UDim2.new(1, -48, 0, 0)
-clearBtn.BackgroundColor3 = C.row
-clearBtn.Text = "Clear"
-clearBtn.Font = Enum.Font.GothamBold
-clearBtn.TextSize = 12
-clearBtn.TextColor3 = C.bad
-corner(6).Parent = clearBtn
-clearBtn.Parent = headRow
-
--- playlist list
-local listFrame = Instance.new("ScrollingFrame")
-listFrame.Size = UDim2.new(1, 0, 0, LIST_H)
-listFrame.LayoutOrder = 5
-listFrame.BackgroundColor3 = C.panel
-listFrame.ScrollBarThickness = 4
-listFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-listFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-listFrame.ScrollBarImageColor3 = C.acc
-corner(10).Parent = listFrame
-stroke().Parent = listFrame
-listFrame.Parent = body
-
-local listPad = Instance.new("UIPadding")
-listPad.PaddingTop = UDim.new(0, 8)
-listPad.PaddingBottom = UDim.new(0, 8)
-listPad.PaddingLeft = UDim.new(0, 8)
-listPad.PaddingRight = UDim.new(0, 8)
-listPad.Parent = listFrame
-
-local listLayout = Instance.new("UIListLayout")
-listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Padding = UDim.new(0, 6)
-listLayout.Parent = listFrame
-
--- toast
-toastLabel = Instance.new("TextLabel")
-toastLabel.Size = UDim2.new(1, -24, 0, 34)
-toastLabel.Position = UDim2.new(0, 12, 1, -46)
-toastLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-toastLabel.BackgroundTransparency = 1
-toastLabel.TextTransparency = 1
-toastLabel.Text = ""
-toastLabel.Font = Enum.Font.GothamBold
-toastLabel.TextSize = 13
-toastLabel.TextColor3 = C.txt
-toastLabel.TextWrapped = true
-corner(8).Parent = toastLabel
-toastLabel.ZIndex = 5
-toastLabel.Parent = main
-
--- ── playlist rendering ────────────────────────────────────
 local rows = {}
-
 local function rebuildList()
     for _, r in ipairs(rows) do if r and r.Parent then r:Destroy() end end
     rows = {}
-    for i, entry in ipairs(playlist) do
-        local row = Instance.new("Frame")
+    for _, entry in ipairs(playlist) do
+        local row = RoundedFrame(playlistPage, Color3.new(1, 1, 1), 3)
         row.Size = UDim2.new(1, 0, 0, 36)
-        row.BackgroundColor3 = C.row
-        row.LayoutOrder = i
-        row.Parent = listFrame
-        corner(8).Parent = row
-
-        local nameLbl = Instance.new("TextLabel")
-        nameLbl.Size = UDim2.new(1, -70, 0, 18)
-        nameLbl.Position = UDim2.new(0, 10, 0, 2)
-        nameLbl.BackgroundTransparency = 1
-        nameLbl.Text = entry.name or ("Audio " .. entry.id)
-        nameLbl.Font = Enum.Font.Gotham
-        nameLbl.TextSize = 13
-        nameLbl.TextColor3 = C.txt
-        nameLbl.TextXAlignment = Enum.TextXAlignment.Left
-        nameLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        nameLbl.Parent = row
-
-        local idLbl = Instance.new("TextLabel")
-        idLbl.Size = UDim2.new(1, -70, 0, 14)
-        idLbl.Position = UDim2.new(0, 10, 0, 20)
-        idLbl.BackgroundTransparency = 1
-        idLbl.Text = tostring(entry.id)
-        idLbl.Font = Enum.Font.Gotham
-        idLbl.TextSize = 10
-        idLbl.TextColor3 = C.dim
-        idLbl.TextXAlignment = Enum.TextXAlignment.Left
-        idLbl.TextTruncate = Enum.TextTruncate.AtEnd
-        idLbl.Parent = row
-
-        local del = Instance.new("TextButton")
-        del.Size = UDim2.fromOffset(26, 26)
-        del.Position = UDim2.new(1, -32, 0, 5)
-        del.BackgroundTransparency = 1
-        del.Text = "✕"
-        del.Font = Enum.Font.GothamBold
-        del.TextSize = 13
-        del.TextColor3 = C.bad
-        del.Parent = row
-
-        local hit = Instance.new("TextButton")
-        hit.Size = UDim2.new(1, 0, 1, 0)
-        hit.BackgroundTransparency = 1
-        hit.Text = ""
-        hit.Parent = row
-
-        bind(hit.Activated, function() playAudio(entry.id, entry.name) end)
-        bind(del.Activated, function()
+        row.LayoutOrder = NextOrder()
+        Make("UIStroke", row, { Color = Color3.new(0, 0, 0), Thickness = 1 })
+        Make("TextLabel", row, {
+            Size = UDim2.new(1, -64, 0, 16),
+            Position = UDim2.new(0, 6, 0, 2),
+            BackgroundTransparency = 1,
+            Text = entry.name or ("Audio " .. entry.id),
+            TextColor3 = TXT,
+            TextSize = 13,
+            Font = FONT,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd
+        })
+        Make("TextLabel", row, {
+            Size = UDim2.new(1, -64, 0, 13),
+            Position = UDim2.new(0, 6, 0, 19),
+            BackgroundTransparency = 1,
+            Text = tostring(entry.id),
+            TextColor3 = Color3.fromRGB(120, 120, 120),
+            TextSize = 10,
+            Font = FONT,
+            TextXAlignment = Enum.TextXAlignment.Left,
+            TextTruncate = Enum.TextTruncate.AtEnd
+        })
+        local playB = Make("TextButton", row, {
+            Size = UDim2.new(0, 26, 0, 26),
+            Position = UDim2.new(1, -60, 0, 5),
+            BackgroundColor3 = Color3.fromRGB(50, 50, 50),
+            Text = "▶",
+            TextColor3 = TXT,
+            TextSize = 12,
+            Font = FONT_BOLD,
+            AutoButtonColor = true
+        })
+        Make("UICorner", playB, { CornerRadius = UDim.new(0, 3) })
+        local delB = Make("TextButton", row, {
+            Size = UDim2.new(0, 26, 0, 26),
+            Position = UDim2.new(1, -30, 0, 5),
+            BackgroundColor3 = Color3.fromRGB(40, 40, 40),
+            Text = "✕",
+            TextColor3 = Color3.fromRGB(230, 90, 90),
+            TextSize = 12,
+            Font = FONT_BOLD,
+            AutoButtonColor = true
+        })
+        Make("UICorner", delB, { CornerRadius = UDim.new(0, 3) })
+        bind(playB.MouseButton1Click, function() playAudio(entry.id, entry.name) end)
+        bind(delB.MouseButton1Click, function()
             playlist[entry] = nil
             local clean = {}
             for _, e in ipairs(playlist) do if e then clean[#clean + 1] = e end end
@@ -739,20 +808,25 @@ local function rebuildList()
             savePlaylist()
             rebuildList()
         end)
-
         rows[#rows + 1] = row
     end
-    listTitle.Text = "PLAYLIST (" .. #playlist .. ")"
 end
 
--- ── actions ───────────────────────────────────────────────
-bind(playBtn.Activated, function()
+-- ══════════════════════════════════════════════════════════
+--  ACTIONS
+-- ══════════════════════════════════════════════════════════
+bind(playClick.MouseButton1Click, function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     playAudio(id)
 end)
 
-bind(saveBtn.Activated, function()
+bind(stopClick.MouseButton1Click, function()
+    stopAudio()
+    sendMsg({ type = "stop", user = displayName() })
+end)
+
+bind(saveClick.MouseButton1Click, function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     for _, e in ipairs(playlist) do
@@ -772,65 +846,112 @@ bind(saveBtn.Activated, function()
     end)
 end)
 
-bind(stopBtn.Activated, function()
-    stopAudio()
-    sendMsg({ type = "stop", user = displayName() })
-end)
-
-bind(clearBtn.Activated, function()
+bind(clearClick.MouseButton1Click, function()
     playlist = {}
     savePlaylist()
     rebuildList()
 end)
 
--- ── toggle ────────────────────────────────────────────────
-local toggleBtn = Instance.new("TextButton")
-toggleBtn.Name = "BoomboxToggle"
-toggleBtn.Size = UDim2.fromOffset(38, 38)
-toggleBtn.Position = UDim2.new(1, -56, 1, -140)
-toggleBtn.AnchorPoint = Vector2.new(1, 1)
-toggleBtn.BackgroundColor3 = C.panel
-toggleBtn.BackgroundTransparency = 0.15
-toggleBtn.Text = "🎧"
-toggleBtn.TextColor3 = C.txt
-toggleBtn.Font = Enum.Font.GothamBold
-toggleBtn.TextSize = 18
-toggleBtn.ZIndex = 10
-corner(19).Parent = toggleBtn
-stroke().Parent = toggleBtn
-toggleBtn.Parent = screen
+-- TOAST
+toastLabel = Make("TextLabel", win, {
+    Size = UDim2.new(1, -16, 0, 28),
+    Position = UDim2.new(0, 8, 1, -36),
+    BackgroundColor3 = Color3.new(0, 0, 0),
+    BackgroundTransparency = 1,
+    TextTransparency = 1,
+    Text = "",
+    Font = FONT_BOLD,
+    TextSize = 12,
+    TextColor3 = TXT_TITLE,
+    TextWrapped = true,
+    ZIndex = 5
+})
+Make("UICorner", toastLabel, { CornerRadius = UDim.new(0, 6) })
 
-local guiHidden = false
-local function toggleGui()
-    guiHidden = not guiHidden
-    main.Visible = not guiHidden
-    toast(guiHidden and "GUI hidden (" .. TOGGLE_KEY.Name .. " to show)" or "GUI shown")
-end
+-- ══════════════════════════════════════════════════════════
+--  MOBILE TOGGLE BUTTON — copied 1:1 from MM2PepsiMenu
+-- ══════════════════════════════════════════════════════════
+if isMobile then
+    local mobileBtn = Make("TextButton", mobileGui, {
+        Name = "BoomboxToggle",
+        Size = UDim2.new(0, 50, 0, 50),
+        Position = UDim2.new(0.5, 0, 0, 10),
+        AnchorPoint = Vector2.new(0.5, 0),
+        BackgroundColor3 = Color3.fromRGB(35, 35, 35),
+        BackgroundTransparency = 0.3,
+        BorderSizePixel = 0,
+        Text = "🎧",
+        TextColor3 = Color3.fromRGB(200, 200, 200),
+        TextSize = 22,
+        Font = FONT,
+        ZIndex = 100,
+        AutoButtonColor = true
+    })
+    Make("UICorner", mobileBtn, { CornerRadius = UDim.new(1, 0) })
+    Make("UIStroke", mobileBtn, { Color = Color3.fromRGB(100, 100, 100), Thickness = 1 })
+    Make("UIAspectRatioConstraint", mobileBtn, { AspectRatio = 1 })
 
--- toggle button: tap = show/hide GUI, double tap = reset positions. Dragging
--- the button is handled by the unified drag system above (tap vs drag by 15px).
-local lastTap = 0
-local function toggleTap()
-    local now = os.clock()
-    if now - lastTap < 0.35 then
-        main.Position = UDim2.fromScale(0.5, 0.5)
-        toggleBtn.Position = UDim2.new(1, -56, 1, -140)
-        toggleBtn.AnchorPoint = Vector2.new(1, 1)
-        toast("Boombox reset to center")
-    else
-        toggleGui()
+    local guiHidden = false
+    local function toggleGui()
+        guiHidden = not guiHidden
+        UG.Enabled = not guiHidden
+        if not guiHidden then
+            win.Position = UDim2.new(0.5, -WINDOW_W / 2, 0, 70)
+            clampWinToScreen(win)
+        end
+        toast(guiHidden and "GUI hidden" or "GUI shown")
     end
-    lastTap = now
+
+    local btnDragging = false
+    local btnStartPos = Vector2.new()
+    local btnDragOffset = Vector2.new()
+
+    bind(mobileBtn.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            btnStartPos = UIS:GetMouseLocation()
+            btnDragOffset = Vector2.new(btnStartPos.X - mobileBtn.AbsolutePosition.X, btnStartPos.Y - mobileBtn.AbsolutePosition.Y)
+            btnDragging = true
+        end
+    end)
+
+    bind(UIS.InputChanged, function(input)
+        if not btnDragging then return end
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
+            local pos = UIS:GetMouseLocation()
+            mobileBtn.Position = UDim2.new(0, pos.X - btnDragOffset.X, 0, pos.Y - btnDragOffset.Y)
+            mobileBtn.AnchorPoint = Vector2.new(0, 0)
+        end
+    end)
+
+    bind(mobileBtn.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            if btnDragging then
+                btnDragging = false
+                local endPos = UIS:GetMouseLocation()
+                local moved = (Vector2.new(endPos.X, endPos.Y) - btnStartPos).Magnitude
+                if moved < 15 then
+                    toggleGui()
+                end
+            end
+        end
+    end)
 end
 
-addDragHandle(toggleBtn, toggleBtn, toggleTap)
-
+-- keyboard toggle (desktop)
 bind(UIS.InputBegan, function(input, processed)
     if processed then return end
-    if input.KeyCode == TOGGLE_KEY then toggleGui() end
+    if input.KeyCode == TOGGLE_KEY then
+        if not UG.Enabled then
+            win.Position = UDim2.new(0.5, -WINDOW_W / 2, 0, 70)
+            clampWinToScreen(win)
+        end
+        UG.Enabled = not UG.Enabled
+    end
 end)
 
--- ── start ─────────────────────────────────────────────────
+-- ══════════════════════════════════════════════════════════
+--  START
+-- ══════════════════════════════════════════════════════════
 loadPlaylist()
 rebuildList()
 setStatus(false)
@@ -842,7 +963,8 @@ BB.Cleanup = function()
     _cleanup = {}
     for i = #conns, 1, -1 do pcall(conns[i]) end
     stopAudio()
-    pcall(function() if screen then screen:Destroy() end end)
+    pcall(function() if UG then UG:Destroy() end end)
+    pcall(function() if mobileGui then mobileGui:Destroy() end end)
 end
 
 print("[Boombox] loaded. WS_URL = " .. WS_URL)
