@@ -134,7 +134,7 @@ local function bindEvent(obj, name, cb)
     if not obj then return end
     local ok, v = pcall(function() return obj[name] end)
     if not ok or v == nil then pcall(function() obj[name] = cb end) return end
-    if type(v) == "function" then pcall(v, cb) else pcall(function() v:bind(cb) end) end
+    if type(v) == "function" then pcall(v, cb) else pcall(function() bind(v, cb) end) end
 end
 
 local function wsSend(obj, text)
@@ -401,7 +401,7 @@ local function clampWinToScreen()
     main.Position = UDim2.new(0, x, 0, y)
 end
 
-dragBtn.MouseButton1Down:bind(function()
+bind(dragBtn.MouseButton1Down, function()
     local mouse = UIS:GetMouseLocation()
     local ok, hit = pcall(function() return LP.PlayerGui:GetGuiObjectsAtPosition(mouse.X, mouse.Y) end)
     if ok and hit then
@@ -414,13 +414,13 @@ dragBtn.MouseButton1Down:bind(function()
     lockCamera()
 end)
 
-UIS.InputEnded:bind(function(input)
+bind(UIS.InputEnded, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         if dragging then endDrag() end
     end
 end)
 
-UIS.InputChanged:bind(function(input)
+bind(UIS.InputChanged, function(input)
     if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local mouse = UIS:GetMouseLocation()
         main.Position = UDim2.new(0, mouse.X - dragOffset.X, 0, mouse.Y - dragOffset.Y)
@@ -552,18 +552,18 @@ local function setVolFromX(x)
     pctLabel.Text = math.floor(volume * 100) .. "%"
     if currentSound then pcall(function() currentSound.Volume = volume end) end
 end
-volBar.InputBegan:bind(function(input)
+bind(volBar.InputBegan, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         draggingVol = true
         setVolFromX(input.Position.X)
     end
 end)
-volBar.InputChanged:bind(function(input)
+bind(volBar.InputChanged, function(input)
     if draggingVol and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         setVolFromX(input.Position.X)
     end
 end)
-volBar.InputEnded:bind(function(input)
+bind(volBar.InputEnded, function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         draggingVol = false
     end
@@ -692,8 +692,8 @@ local function rebuildList()
         hit.Text = ""
         hit.Parent = row
 
-        hit.Activated:bind(function() playAudio(entry.id, entry.name) end)
-        del.Activated:bind(function()
+        bind(hit.Activated, function() playAudio(entry.id, entry.name) end)
+        bind(del.Activated, function()
             playlist[entry] = nil
             local clean = {}
             for _, e in ipairs(playlist) do if e then clean[#clean + 1] = e end end
@@ -708,13 +708,13 @@ local function rebuildList()
 end
 
 -- ── actions ───────────────────────────────────────────────
-playBtn.Activated:bind(function()
+bind(playBtn.Activated, function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     playAudio(id)
 end)
 
-saveBtn.Activated:bind(function()
+bind(saveBtn.Activated, function()
     local id = tostring(idBox.Text):match("(%d+)")
     if not id then return toast("Enter an audio ID first") end
     for _, e in ipairs(playlist) do
@@ -734,12 +734,12 @@ saveBtn.Activated:bind(function()
     end)
 end)
 
-stopBtn.Activated:bind(function()
+bind(stopBtn.Activated, function()
     stopAudio()
     sendMsg({ type = "stop", user = displayName() })
 end)
 
-clearBtn.Activated:bind(function()
+bind(clearBtn.Activated, function()
     playlist = {}
     savePlaylist()
     rebuildList()
@@ -776,7 +776,7 @@ local btnDragging = false
 local btnStartPos = Vector2.new()
 local btnDragOffset = Vector2.new()
 
-toggleBtn.InputBegan:bind(function(input)
+bind(toggleBtn.InputBegan, function(input)
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         btnStartPos = UIS:GetMouseLocation()
         btnDragOffset = Vector2.new(btnStartPos.X - toggleBtn.AbsolutePosition.X, btnStartPos.Y - toggleBtn.AbsolutePosition.Y)
@@ -785,7 +785,7 @@ toggleBtn.InputBegan:bind(function(input)
     end
 end)
 
-UIS.InputChanged:bind(function(input)
+bind(UIS.InputChanged, function(input)
     if not btnDragging then return end
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseMovement then
         local pos = UIS:GetMouseLocation()
@@ -794,7 +794,7 @@ UIS.InputChanged:bind(function(input)
     end
 end)
 
-toggleBtn.InputEnded:bind(function(input)
+bind(toggleBtn.InputEnded, function(input)
     if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
         if btnDragging then
             btnDragging = false
@@ -817,7 +817,7 @@ toggleBtn.InputEnded:bind(function(input)
     end
 end)
 
-UIS.InputBegan:bind(function(input, processed)
+bind(UIS.InputBegan, function(input, processed)
     if processed then return end
     if input.KeyCode == TOGGLE_KEY then toggleGui() end
 end)
