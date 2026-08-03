@@ -47,62 +47,6 @@ local ws           = nil
 local connected    = false
 local nowPlaying   = ""
 
--- ── log buffer + auto-upload (paste.rs → dpaste → clipboard) ─
-local logBuffer = {}
-local _origPrint = print
-print = function(...)
-    local parts = {}
-    for i = 1, select("#", ...) do parts[i] = tostring(select(i, ...)) end
-    local line = table.concat(parts, " ")
-    _origPrint(line)
-    if line:find("Boombox", 1, true) then
-        logBuffer[#logBuffer + 1] = line
-        if #logBuffer > 300 then
-            for i = 1, #logBuffer - 300 do table.remove(logBuffer, 1) end
-        end
-    end
-end
-
-local function httpPost(url, body, json)
-    local g = getgenv()
-    local fn = g.request or g.http_request or (g.syn and g.syn.request)
-    if not fn then return nil, "no request fn" end
-    local headers = json and { ["Content-Type"] = "application/json" } or { ["Content-Type"] = "text/plain" }
-    local ok, res = pcall(function()
-        return fn({ Url = url, Method = "POST", Headers = headers, Body = body })
-    end)
-    if ok and res then
-        return tostring(res.Body or ""), res.StatusCode == 200 or res.StatusCode == 201
-    end
-    return nil, false
-end
-
-local function dumpLogs()
-    local text = "=== Boombox log dump ===\n" .. table.concat(logBuffer, "\n")
-    local clip = getgenv().setclipboard or setclipboard
-    if clip then
-        pcall(clip, text)
-        print("[Boombox] combined log copied to clipboard")
-    end
-    local url, ok = httpPost("https://paste.rs/", text)
-    if ok and url and url:match("^https?://") then
-        print("[Boombox] LOG URL: " .. url)
-        if clip then pcall(clip, url) end
-        return
-    end
-    print("[Boombox] paste.rs failed (" .. tostring(url) .. ") — trying dpaste")
-    local body, ok2 = httpPost("https://dpaste.org/api/", Http:JSONEncode({ content = text, title = "boombox log", syntax = "text" }), true)
-    if ok2 and body then
-        local okj, j = pcall(function() return Http:JSONDecode(body) end)
-        if okj and type(j) == "table" and j.url then
-            print("[Boombox] LOG URL: " .. tostring(j.url))
-            if clip then pcall(clip, j.url) end
-            return
-        end
-    end
-    print("[Boombox] dpaste failed too (" .. tostring(body) .. ")")
-end
-
 local function displayName()
     return pcall(function() return LP.DisplayName end) and LP.DisplayName or LP.Name or "Player"
 end
@@ -283,56 +227,6 @@ local function pcallLog(label, fn)
     return ok, err
 end
 
-local function dumpWs(h)
-    if not h then return end
-    print("[Boombox] handle type=" .. type(h) .. " tostring=" .. tostring(h))
-    if type(h) == "table" then
-        pcall(function()
-            for k, v in pairs(h) do
-                print("[Boombox]   handle." .. tostring(k) .. " = " .. type(v))
-            end
-        end)
-    end
-    local mtOk, mt = pcall(getmetatable, h)
-    if mtOk and type(mt) == "table" then
-        pcall(function()
-            for k, v in pairs(mt) do
-                if k ~= "__index" then
-                    print("[Boombox]   meta." .. tostring(k) .. " = " .. type(v))
-                end
-            end
-        end)
-        local idx = mt.__index
-        if type(idx) == "table" then
-            pcall(function()
-                for k, v in pairs(idx) do
-                    print("[Boombox]   index." .. tostring(k) .. " = " .. type(v))
-                end
-            end)
-        elseif type(idx) == "function" then
-            print("[Boombox]   meta.__index = <function>")
-        end
-    else
-        print("[Boombox]   getmetatable -> " .. (mtOk and tostring(mt) or "ERR"))
-    end
-    local probes = { "Send", "send", "Close", "close", "Disconnect", "disconnect",
-        "OnMessage", "OnOpen", "OnClose", "OnError", "onMessage", "onOpen", "onClose", "onError",
-        "Connect", "connect", "Message", "message", "ReadyState", "readyState", "State", "state", "IsOpen", "isOpen" }
-    for _, n in ipairs(probes) do
-        local ok, v = pcall(function() return h[n] end)
-        print("[Boombox]   probe " .. n .. " = " .. (ok and type(v) or "ERR"))
-    end
-end
-
-local function probeConn(h)
-    local parts = {}
-    for _, n in ipairs({ "ReadyState", "readyState", "State", "state", "Open", "open", "IsOpen", "isOpen" }) do
-        local ok, v = pcall(function() return h[n] end)
-        if ok and v ~= nil then parts[#parts + 1] = n .. "=" .. tostring(v) end
-    end
-    return #parts > 0 and table.concat(parts, " ") or "(no state field)"
-end
-
 -- ── toast/status (toast prints to console; GUI built later) ─
 local statusLabel, npLabel
 
@@ -355,13 +249,24 @@ local function stopAudio()
     end
 end
 
+local function getAudioAttach()
+    local char = LP.Character
+    if char then
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if root then return root end
+        local head = char:FindFirstChild("Head")
+        if head then return head end
+    end
+    return SoundService
+end
+
 local function playLocal(id, name)
     stopAudio()
     currentSound = Instance.new("Sound")
     currentSound.SoundId = "rbxassetid://" .. id
     currentSound.Volume = volume
     currentSound.Name = "BoomboxSound"
-    currentSound.Parent = SoundService
+    currentSound.Parent = getAudioAttach()
     pcall(function() currentSound:Play() end)
     nowPlaying = name or ("Audio " .. id)
     if npLabel then npLabel.Text = "Now playing: " .. nowPlaying end
@@ -422,7 +327,6 @@ local function connectToServer()
     local okB, errB = pcall(function() resB = connectFn(WS_URL, callbacks) end)
     if okB and resB ~= nil then
         print("[Boombox] connect returned handle=" .. tostring(resB))
-        pcallLog("dumpWs", function() dumpWs(resB) end)
         pcallLog("wireEvents", function() wireEvents(resB) end)
         ws = { style = "obj", obj = resB, lib = lib, send = sendFn, close = closeFn }
         setStatus(true)
@@ -455,14 +359,12 @@ local function connectToServer()
         return false
     end
     print("[Boombox] plain connect returned handle=" .. tostring(resA))
-    pcallLog("dumpWs", function() dumpWs(resA) end)
     pcallLog("wireEvents", function() wireEvents(resA) end)
     ws = { style = "obj", obj = resA, lib = lib, send = sendFn, close = closeFn }
     return true
 end
 
 local libWarned = false
-local stuckLogged = 0
 task.spawn(function()
     while BB.Running do
         pcallLog("reconnect-loop", function()
@@ -478,27 +380,14 @@ task.spawn(function()
                             print("[Boombox] No websocket lib found (checked websocket/WebSocket/syn/fluxus/http)")
                         end
                     else
-                        print("[Boombox] ws is nil, attempting connect...")
                         connectToServer()
                         if not connected then task.wait(1) end
                     end
-                end
-            else
-                if not connected and os.clock() - stuckLogged > 10 then
-                    stuckLogged = os.clock()
-                    print("[Boombox] no OnOpen yet. state: " .. (ws and ws.obj and probeConn(ws.obj) or "?"))
                 end
             end
         end)
         task.wait(5)
     end
-end)
-
-task.spawn(function()
-    task.wait(15)
-    dumpLogs()
-    task.wait(60)
-    dumpLogs()
 end)
 
 -- ══════════════════════════════════════════════════════════
@@ -1223,26 +1112,6 @@ end)
 loadPlaylist()
 rebuildList()
 setStatus(connected)
-task.spawn(function()
-    local g = getgenv()
-    local fn = g.request or g.http_request or (g.syn and g.syn.request)
-    if not fn then
-        print("[Boombox] relay probe skipped (no request fn)")
-        return
-    end
-    local url = WS_URL:gsub("^wss://", "https://")
-    local ok, res = pcall(function()
-        return fn({ Url = url, Method = "GET" })
-    end)
-    if ok then
-        print("[Boombox] relay HTTP probe " .. url .. " -> " .. tostring(res and res.StatusCode))
-    else
-        print("[Boombox] relay HTTP probe error: " .. tostring(res))
-    end
-end)
-print("[Boombox] loaded on " .. (isMobile and "mobile" or "desktop")
-    .. " | viewport " .. tostring(VIEWPORT)
-    .. " | WS_URL " .. WS_URL)
 toast("Boombox loaded")
 
 BB.Cleanup = function()
@@ -1254,5 +1123,3 @@ BB.Cleanup = function()
     pcall(function() if UG then UG:Destroy() end end)
     pcall(function() if mobileGui then mobileGui:Destroy() end end)
 end
-
-print("[Boombox] loaded. WS_URL = " .. WS_URL)
