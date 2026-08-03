@@ -7,6 +7,7 @@ connects to one relay server. When anyone plays a song, **everyone hears it**.
 boombox.lua        ← execute this in Delta on Roblox (the GUI + playlist)
 server.js          ← relay for hosting yourself (see below)
 worker.js          ← relay for Cloudflare Workers (best free option)
+wrangler.toml      ← config so Cloudflare can deploy worker.js from GitHub
 web/index.html     ← browser client (auto-served by server.js and worker.js)
 ```
 
@@ -15,17 +16,23 @@ web/index.html     ← browser client (auto-served by server.js and worker.js)
 ## 1. Get the relay online (free)
 
 > If you host on your own PC/phone your friends can't reach it. Use Cloudflare
-> Workers instead — it's **always-on, free, no PC, no credit card, never sleeps**.
+> Workers instead — it's **always-on, free, no PC, no credit card, never sleeps**,
+> and it can deploy straight from this GitHub repo.
 
-### Option A — Cloudflare Workers (RECOMMENDED, 5 minutes)
+### Option A — Cloudflare Workers from your GitHub repo (RECOMMENDED, ~5 min)
 
 1. Go to **dash.cloudflare.com** → sign up (free) → **Workers & Pages**
-2. **Create** → **Worker** → **Deploy** (create the default one)
-3. Click **Edit code**, delete everything, paste the contents of **`worker.js`**
-4. Click **Deploy**. You get `https://<your-name>.<subdomain>.workers.dev`
-5. Put that into `boombox.lua` as `wss://<your-name>.<subdomain>.workers.dev`
+2. **Create application** → **Connect to Git** → choose the
+   `boombox-relay` repo (the `wrangler.toml` makes it build with zero setup)
+3. It builds and deploys automatically → you get
+   `https://boombox-relay.<your-subdomain>.workers.dev`
+4. Put that into `boombox.lua` as `wss://boombox-relay.<your-subdomain>.workers.dev`
    and execute. Share the same URL with your friend (they use the same script).
-6. Bonus: opening the URL in a browser gives your friend a web player too.
+5. Bonus: opening the URL in a browser gives your friend a web player too.
+   Every time you push to GitHub it redeploys automatically.
+
+> No GitHub link? Instead do **Create application → Worker → Edit code** →
+> delete everything → paste `worker.js` → Deploy. Same result.
 
 ### Option B — your own PC / Termux + tunnel (free, needs your PC online)
 
@@ -47,12 +54,12 @@ cloudflared tunnel --url http://localhost:8080
 # → prints https://xxxx.trycloudflare.com  (use wss://xxxx.trycloudflare.com)
 ```
 
-### Option C — free web host (no PC, but some sleep when idle)
+### Option C — Render.com (free web host, imports from GitHub)
 
-- **Render.com** → New Web Service → deploy this folder (Build `npm install`,
-  Start `node server.js`). Free tier supports websockets (wakes on demand).
-- **Glitch.com** → new project → paste `server.js` + `package.json` →
-  it auto-installs and starts → `https://your-app.glitch.me`.
+- **Render.com** → New → Web Service → connect this GitHub repo →
+  Build: `npm install`, Start: `node server.js` → `https://<name>.onrender.com`
+- Free tier wakes on demand, but it can sleep when idle — less reliable than
+  Cloudflare for long sessions.
 
 ---
 
