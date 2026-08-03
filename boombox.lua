@@ -107,6 +107,7 @@ local function getWsLib()
     local g = getgenv()
     local env = getfenv(0)
     local c = {
+        g.websocket, env.websocket, _G and _G.websocket,
         g.WebSocket, env.WebSocket, _G and _G.WebSocket,
         g.syn and g.syn.websocket, g.fluxus and g.fluxus.websocket,
         g.http and g.http.websocket,
@@ -126,12 +127,32 @@ local function bindEvent(obj, name, cb)
     if type(v) == "function" then pcall(v, cb) else pcall(function() bind(v, cb) end) end
 end
 
-local function wsSend(obj, text)
-    if obj.Send then obj:Send(text) elseif obj.send then obj:send(text) end
+local function wsSend(conn, text)
+    if not conn then return end
+    if conn.style == "id" then
+        local lib = conn.lib
+        local id = conn.id
+        if lib.send then pcall(function() lib.send(id, text) end)
+        elseif lib.Send then pcall(function() lib.Send(id, text) end) end
+    else
+        local obj = conn.obj
+        if obj.Send then pcall(function() obj:Send(text) end)
+        elseif obj.send then pcall(function() obj:send(text) end) end
+    end
 end
 
-local function wsClose(obj)
-    if obj.Close then obj:Close() elseif obj.close then obj:close() end
+local function wsClose(conn)
+    if not conn then return end
+    if conn.style == "id" then
+        local lib = conn.lib
+        local id = conn.id
+        if lib.close then pcall(function() lib.close(id) end)
+        elseif lib.Close then pcall(function() lib.Close(id) end) end
+    else
+        local obj = conn.obj
+        if obj.Close then pcall(function() obj:Close() end)
+        elseif obj.close then pcall(function() obj:close() end) end
+    end
 end
 
 local function sendMsg(data)
@@ -140,17 +161,11 @@ local function sendMsg(data)
     return ok
 end
 
--- ── toast + status (guarded; GUI is built later) ──────────
-local toastLabel, statusLabel, npLabel
+-- ── toast/status (toast prints to console; GUI built later) ─
+local statusLabel, npLabel
 
 local function toast(text)
-    if not toastLabel then return end
-    toastLabel.Text = text
-    toastLabel.TextTransparency = 0
-    toastLabel.BackgroundTransparency = 0.85
-    local ti = Tween:Create(toastLabel, TweenInfo.new(2.2), { TextTransparency = 1, BackgroundTransparency = 1 })
-    ti:Play()
-    task.delay(2.2, function() ti:Cancel() toastLabel.TextTransparency = 1 toastLabel.BackgroundTransparency = 1 end)
+    print("[Boombox] " .. tostring(text))
 end
 
 local function setStatus(ok)
@@ -213,14 +228,29 @@ end
 local function connectToServer()
     local lib = getWsLib()
     if not lib then return false end
-    local ok, obj = pcall(function() return lib.connect(WS_URL) end)
-    if not ok or not obj then return false end
-    ws = obj
-    bindEvent(obj, "OnMessage", handleMessage)
-    bindEvent(obj, "OnOpen", function() setStatus(true) toast("Connected to relay") end)
-    bindEvent(obj, "OnClose", function() setStatus(false) ws = nil end)
-    bindEvent(obj, "OnError", function() setStatus(false) ws = nil end)
-    return true
+    local okA, resA = pcall(function() return lib.connect(WS_URL) end)
+    if okA and resA then
+        ws = { style = "obj", obj = resA }
+        bindEvent(resA, "OnMessage", handleMessage)
+        bindEvent(resA, "OnOpen", function() setStatus(true) print("[Boombox] Connected to relay") end)
+        bindEvent(resA, "OnClose", function() setStatus(false) ws = nil end)
+        bindEvent(resA, "OnError", function() setStatus(false) ws = nil end)
+        return true
+    end
+    local resB = nil
+    local okB = pcall(function()
+        resB = lib.connect(WS_URL, {
+            onOpen = function() setStatus(true) print("[Boombox] Connected to relay") end,
+            onMessage = function(msg) handleMessage(msg) end,
+            onClose = function() setStatus(false) ws = nil print("[Boombox] Disconnected") end,
+            onError = function(err) setStatus(false) ws = nil print("[Boombox] WS error: " .. tostring(err)) end,
+        })
+    end)
+    if okB then
+        ws = { style = "id", id = resB, lib = lib }
+        return true
+    end
+    return false
 end
 
 local libWarned = false
@@ -881,22 +911,6 @@ bind(clearClick.MouseButton1Click, function()
     savePlaylist()
     rebuildList()
 end)
-
--- TOAST
-toastLabel = Make("TextLabel", win, {
-    Size = UDim2.new(1, -16, 0, 28),
-    Position = UDim2.new(0, 8, 1, -36),
-    BackgroundColor3 = Color3.new(0, 0, 0),
-    BackgroundTransparency = 1,
-    TextTransparency = 1,
-    Text = "",
-    Font = FONT_BOLD,
-    TextSize = 12,
-    TextColor3 = TXT_TITLE,
-    TextWrapped = true,
-    ZIndex = 5
-})
-Make("UICorner", toastLabel, { CornerRadius = UDim.new(0, 6) })
 
 -- ══════════════════════════════════════════════════════════
 --  MOBILE TOGGLE BUTTON — copied 1:1 from MM2PepsiMenu
