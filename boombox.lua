@@ -23,7 +23,7 @@ local SoundService = game:GetService("SoundService")
 
 local LP = Players.LocalPlayer
 
-local WS_URL   = "wss://YOUR-URL-HERE"      -- <<< YOUR RELAY URL
+local WS_URL   = "wss://boombox-relay.wifiskeleton07.workers.dev"
 local SAVE_FILE = "boombox_playlist.json"
 
 local playlist     = {}
