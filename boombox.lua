@@ -321,15 +321,29 @@ statusText.TextXAlignment = Enum.TextXAlignment.Right
 statusText.Parent = titlebar
 
 -- draggable (works on mobile). The camera is locked to Scriptable while
--- dragging so the touch controller can't rotate it, and the drag keeps
--- tracking the touch even if the titlebar slides off-screen.
+-- dragging (re-forced every frame in case the game resets it) so the touch
+-- camera controller can't rotate the camera, and the drag keeps tracking
+-- the touch even if the titlebar slides off-screen.
 local dragging = nil
 local savedCamType = nil
+
+local function lockCamera()
+    local cam = workspace.CurrentCamera
+    if not cam then return end
+    if savedCamType == nil then
+        savedCamType = cam.CameraType
+    end
+    pcall(function()
+        if cam.CameraType ~= Enum.CameraType.Scriptable then
+            cam.CameraType = Enum.CameraType.Scriptable
+        end
+    end)
+end
 
 local function endDrag()
     if not dragging then return end
     dragging = nil
-    if savedCamType and workspace.CurrentCamera then
+    if savedCamType ~= nil and workspace.CurrentCamera then
         pcall(function() workspace.CurrentCamera.CameraType = savedCamType end)
     end
     savedCamType = nil
@@ -345,21 +359,27 @@ UIS.InputBegan:Connect(function(input, processed)
     if p.X >= tb.X and p.X <= tb.X + ts.X and p.Y >= tb.Y and p.Y <= tb.Y + ts.Y then
         dragging = { input = input, startPos = main.Position, startInput = p }
         input.Processed = true
-        local cam = workspace.CurrentCamera
-        if cam then
-            savedCamType = cam.CameraType
-            pcall(function() cam.CameraType = Enum.CameraType.Scriptable end)
-        end
+        lockCamera()
     end
 end)
+
+task.spawn(function()
+    while true do
+        if dragging then lockCamera() end
+        task.wait()
+    end
+end)
+
 UIS.InputChanged:Connect(function(input)
     if not dragging or input ~= dragging.input then return end
+    if input.UserInputType ~= Enum.UserInputType.Touch and input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
     local delta = input.Position - dragging.startInput
     main.Position = UDim2.fromScale(
         math.clamp(dragging.startPos.X.Scale + delta.X / screen.AbsoluteSize.X, 0, 1),
         math.clamp(dragging.startPos.Y.Scale + delta.Y / screen.AbsoluteSize.Y, 0, 1)
     )
 end)
+
 UIS.InputEnded:Connect(function(input)
     if dragging and input == dragging.input then
         endDrag()
