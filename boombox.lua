@@ -186,6 +186,8 @@ local function sendMsg(data)
     return ok
 end
 
+local handleMessage
+
 -- ── handle introspection + event wiring (Delta object style) ─
 local function wireEvent(h, name, fn)
     if not h then return end
@@ -288,7 +290,7 @@ local function playAudio(id, name, fromNetwork)
     end
 end
 
-local function handleMessage(raw)
+handleMessage = function(raw)
     local ok, data = pcall(function() return Http:JSONDecode(raw) end)
     if not ok or type(data) ~= "table" then return end
     if data.type == "play" and data.id then
