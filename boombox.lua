@@ -624,7 +624,7 @@ local function Slider(parent, text, min, max, default)
     return f, function() return curVal end, SetCallback, SetValue
 end
 
-local function Seeker(parent)
+local function TimeBar(parent)
     local f = Make("Frame", parent, {
         Size = UDim2.new(1, 0, 0, 34),
         BackgroundTransparency = 1,
@@ -1038,7 +1038,7 @@ volSetCb(function(v)
     if currentSound then pcall(function() currentSound.Volume = volume end) end
 end)
 
-Seeker(playerPage)
+TimeBar(playerPage)
 
 -- ══════════════════════════════════════════════════════════
 --  PLAYLIST PAGE
