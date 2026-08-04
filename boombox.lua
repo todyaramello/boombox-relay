@@ -64,7 +64,14 @@ local function httpGet(url)
 end
 
 local function fetchName(id)
-    local body = httpGet("https://catalog.roblox.com/v1/catalog-items/details?assetTypeId=3&subcategoryType=3&itemIds=" .. id)
+    local body = httpGet("https://economy.roblox.com/v2/assets/" .. id .. "/details")
+    if body then
+        local ok, data = pcall(function() return Http:JSONDecode(body) end)
+        if ok and data and data.Name then
+            return tostring(data.Name)
+        end
+    end
+    body = httpGet("https://catalog.roblox.com/v1/catalog-items/details?assetTypeId=3&subcategoryType=3&itemIds=" .. id)
     if body then
         local ok, data = pcall(function() return Http:JSONDecode(body) end)
         if ok and data.data and data.data[1] and data.data[1].name then
@@ -280,6 +287,25 @@ local function playLocal(id, name)
     end)
 end
 
+local rebuildList
+
+local function addToPlaylist(id, name)
+    id = tostring(id)
+    for _, e in ipairs(playlist) do
+        if tostring(e.id) == id then return false end
+    end
+    local entry = { id = id, name = name or "Audio " .. id }
+    playlist[#playlist + 1] = entry
+    savePlaylist()
+    task.spawn(function()
+        local n = fetchName(id)
+        entry.name = n
+        savePlaylist()
+        if rebuildList then rebuildList() end
+    end)
+    return true
+end
+
 local function playAudio(id, name, fromNetwork)
     local clean = tostring(id):match("(%d+)")
     if not clean then return end
@@ -287,6 +313,7 @@ local function playAudio(id, name, fromNetwork)
     if not fromNetwork then
         sendMsg({ type = "play", id = clean, name = name, user = displayName() })
         toast("▶ Now playing: " .. (name or clean))
+        addToPlaylist(clean, name)
     end
 end
 
@@ -922,7 +949,7 @@ local _, saveClick = GradientBtn(listRow, "＋ Save ID", UDim2.new(0.5, -4, 1, 0
 local _, clearClick = GradientBtn(listRow, "✕ Clear", UDim2.new(0.5, -4, 1, 0))
 
 local rows = {}
-local function rebuildList()
+rebuildList = function()
     for _, r in ipairs(rows) do if r and r.Parent then r:Destroy() end end
     rows = {}
     for _, entry in ipairs(playlist) do
