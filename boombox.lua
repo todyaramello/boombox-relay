@@ -624,6 +624,113 @@ local function Slider(parent, text, min, max, default)
     return f, function() return curVal end, SetCallback, SetValue
 end
 
+local function Seeker(parent)
+    local f = Make("Frame", parent, {
+        Size = UDim2.new(1, 0, 0, 34),
+        BackgroundTransparency = 1,
+        LayoutOrder = NextOrder()
+    })
+    local valLabel = Make("TextLabel", f, {
+        Size = UDim2.new(1, 0, 0, 14),
+        BackgroundTransparency = 1,
+        Text = "Time - 0:00 / 0:00",
+        TextColor3 = TXT,
+        TextSize = 13,
+        Font = FONT,
+        TextXAlignment = Enum.TextXAlignment.Left
+    })
+    local track = RoundedFrame(f, Color3.fromRGB(40, 40, 40), 2)
+    track.Size = UDim2.new(1, 0, 0, 4)
+    track.Position = UDim2.new(0, 0, 0, 16)
+    local fill = RoundedFrame(track, Color3.fromRGB(60, 140, 240), 2)
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    local thumb = Make("Frame", track, {
+        BackgroundColor3 = Color3.new(1, 1, 1),
+        BorderSizePixel = 0,
+        Size = UDim2.new(0, 12, 0, 12),
+        Position = UDim2.new(0, -6, 0.5, -6)
+    })
+    Make("UICorner", thumb, { CornerRadius = UDim.new(0, 6) })
+    Make("UIStroke", thumb, { Color = Color3.fromRGB(50, 50, 50), Thickness = 1 })
+    local sliding = false
+    local function fmt(s)
+        s = math.floor(math.max(s, 0))
+        return math.floor(s / 60) .. ":" .. string.format("%02d", s % 60)
+    end
+    local function setPct(pct, seek)
+        pct = math.clamp(pct, 0, 1)
+        fill.Size = UDim2.new(pct, 0, 1, 0)
+        thumb.Position = UDim2.new(pct, -6, 0.5, -6)
+        if seek then
+            local snd = currentSound
+            if snd then
+                pcall(function()
+                    snd.TimePosition = pct * (snd.TimeLength or 0)
+                end)
+            end
+        end
+    end
+    local function fromX(inputX)
+        local abs = track.AbsolutePosition.X
+        local siz = track.AbsoluteSize.X
+        return math.clamp((inputX - abs) / siz, 0, 1)
+    end
+    local function refresh()
+        local snd = currentSound
+        if not snd then
+            valLabel.Text = "Time - 0:00 / 0:00"
+            setPct(0, false)
+            return
+        end
+        local len = snd.TimeLength or 0
+        if len <= 0 then return end
+        local pos = snd.TimePosition or 0
+        valLabel.Text = "Time - " .. fmt(pos) .. " / " .. fmt(len)
+        if not sliding then setPct(pos / len, false) end
+    end
+    local thumbBtn = Make("TextButton", thumb, {
+        Size = UDim2.new(1, 8, 1, 8),
+        Position = UDim2.new(0, -4, 0, -4),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    bind(thumbBtn.MouseButton1Down, function() sliding = true end)
+    local trackBtn = Make("TextButton", track, {
+        Size = UDim2.new(1, 0, 1, 16),
+        Position = UDim2.new(0, 0, 0, -8),
+        BackgroundTransparency = 1,
+        Text = ""
+    })
+    bind(trackBtn.MouseButton1Down, function()
+        sliding = true
+        local mouse = UIS:GetMouseLocation()
+        setPct(fromX(mouse.X), true)
+        refresh()
+    end)
+    bind(UIS.InputEnded, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            if sliding then
+                sliding = false
+                refresh()
+            end
+        end
+    end)
+    bind(UIS.InputChanged, function(input)
+        if sliding and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local pct = fromX(input.Position.X)
+            setPct(pct, true)
+            refresh()
+        end
+    end)
+    task.spawn(function()
+        while true do
+            task.wait(0.5)
+            refresh()
+        end
+    end)
+    return f
+end
+
 local function TextInput(parent, text, placeholder)
     local f = Make("Frame", parent, {
         Size = UDim2.new(1, 0, 0, 22),
@@ -930,6 +1037,8 @@ volSetCb(function(v)
     volume = v / 10
     if currentSound then pcall(function() currentSound.Volume = volume end) end
 end)
+
+Seeker(playerPage)
 
 -- ══════════════════════════════════════════════════════════
 --  PLAYLIST PAGE
