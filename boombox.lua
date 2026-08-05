@@ -269,13 +269,13 @@ local function getAudioAttach()
     return SoundService
 end
 
-local function playLocal(id, name)
+local function playLocal(id, name, charTarget)
     stopAudio()
     currentSound = Instance.new("Sound")
     currentSound.SoundId = "rbxassetid://" .. id
     currentSound.Volume = volume
     currentSound.Name = "BoomboxSound"
-    currentSound.Parent = getAudioAttach()
+    currentSound.Parent = charTarget or getAudioAttach()
     pcall(function() currentSound:Play() end)
     nowPlaying = name or ("Audio " .. id)
     if npLabel then npLabel.Text = "Now playing: " .. nowPlaying end
@@ -306,10 +306,23 @@ local function addToPlaylist(id, name)
     return true
 end
 
-local function playAudio(id, name, fromNetwork)
+local function playerFromName(name)
+    if not name then return nil end
+    for _, pl in ipairs(Players:GetPlayers()) do
+        if pl.Name == name or pl.DisplayName == name then return pl end
+    end
+    return nil
+end
+
+local function playAudio(id, name, fromNetwork, sourceUser)
     local clean = tostring(id):match("(%d+)")
     if not clean then return end
-    playLocal(clean, name)
+    local charTarget = nil
+    if sourceUser then
+        local pl = playerFromName(sourceUser)
+        if pl and pl.Character then charTarget = pl.Character end
+    end
+    playLocal(clean, name, charTarget)
     if not fromNetwork then
         sendMsg({ type = "play", id = clean, name = name, user = displayName() })
         toast("▶ Now playing: " .. (name or clean))
@@ -321,7 +334,9 @@ handleMessage = function(raw)
     local ok, data = pcall(function() return Http:JSONDecode(raw) end)
     if not ok or type(data) ~= "table" then return end
     if data.type == "play" and data.id then
-        playAudio(data.id, data.name, true)
+        if data.user ~= displayName() then
+            playAudio(data.id, data.name, true, data.user)
+        end
         toast((data.user or "Someone") .. " ▶ " .. (data.name or data.id))
     elseif data.type == "stop" then
         stopAudio()
