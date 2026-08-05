@@ -1,2 +1,5 @@
 node_modules/
 *.log
+
+# MM2PepsiMenu private scripts — NEVER commit to public
+*.lua.new
